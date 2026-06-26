@@ -18,6 +18,12 @@ The mobile launcher starts the app on the local network, opens it on the desktop
 
 If the phone cannot connect, run `Start-Rent-Ledger-Mobile.cmd` as Administrator once so it can add the Private-network firewall rule. Guest Wi-Fi, VPNs, cellular data, or router client isolation can still block phone-to-PC traffic.
 
+## Use Anywhere
+
+For access away from the current Wi-Fi network, publish the static app over HTTPS. See `DEPLOYMENT.md`.
+
+Hosting the app online makes the app itself available anywhere. It does not make browser-local invoice data sync across devices. Shared data requires a backend with authentication and a database.
+
 ## Data Safety
 
 The app stores tenant and invoice data in your browser on the current device. It now keeps a rolling local backup history in browser storage, but browser storage is still not a permanent accounting archive.
