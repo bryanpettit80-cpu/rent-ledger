@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#20332f" />
+    <title>Rent Ledger</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/icon-192.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar">
+        <a class="brand" href="#invoice" aria-label="Rent Ledger home">
+          <img src="assets/rent-ledger-icon.svg" alt="" class="brand-mark" />
+          <span>
+            <strong>Rent Ledger</strong>
+            <small>Invoices</small>
+          </span>
+        </a>
+
+        <nav class="nav-tabs" aria-label="Primary">
+          <button class="nav-tab is-active" data-view="invoice" type="button">Invoice</button>
+          <button class="nav-tab" data-view="tenants" type="button">Tenants</button>
+          <button class="nav-tab" data-view="settings" type="button">Settings</button>
+        </nav>
+
+        <div class="top-actions">
+          <button class="icon-button" id="exportBackup" type="button" title="Export backup" aria-label="Export backup">
+            <span aria-hidden="true">&darr;</span>
+          </button>
+          <label class="icon-button file-button" title="Import backup" aria-label="Import backup">
+            <span aria-hidden="true">&uarr;</span>
+            <input id="importBackup" type="file" accept="application/json" />
+          </label>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="view view-invoice is-active" id="view-invoice" aria-labelledby="invoiceHeading">
+          <div class="workspace">
+            <section class="panel editor-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Create</p>
+                  <h1 id="invoiceHeading">Tenant Invoice</h1>
+                </div>
+                <span class="status-pill" id="invoiceStatus">Draft</span>
+              </div>
+
+              <form id="invoiceForm" class="stack">
+                <div class="grid two">
+                  <label>
+                    Tenant
+                    <select id="tenantSelect" name="tenantId"></select>
+                  </label>
+                  <label>
+                    Invoice #
+                    <input id="invoiceNumber" name="invoiceNumber" type="text" autocomplete="off" />
+                  </label>
+                </div>
+
+                <div class="grid three">
+                  <label>
+                    Issue date
+                    <input id="issueDate" name="issueDate" type="date" />
+                  </label>
+                  <label>
+                    Due date
+                    <input id="dueDate" name="dueDate" type="date" />
+                  </label>
+                  <label>
+                    Billing period
+                    <input id="billingPeriod" name="billingPeriod" type="text" placeholder="July 2026" />
+                  </label>
+                </div>
+
+                <div class="section-heading">
+                  <h2>Charges</h2>
+                  <button class="small-button" id="addLineItem" type="button">Add item</button>
+                </div>
+
+                <div class="line-items" id="lineItems" aria-live="polite"></div>
+
+                <div class="grid two">
+                  <label>
+                    Previous balance
+                    <input id="previousBalance" name="previousBalance" type="number" min="0" step="0.01" />
+                  </label>
+                  <label>
+                    Credits or payments
+                    <input id="credits" name="credits" type="number" min="0" step="0.01" />
+                  </label>
+                </div>
+
+                <label>
+                  Notes
+                  <textarea id="invoiceNotes" name="invoiceNotes" rows="3"></textarea>
+                </label>
+
+                <div class="invoice-total-bar">
+                  <span>Total due</span>
+                  <strong id="totalDue">$0.00</strong>
+                </div>
+
+                <div class="button-row">
+                  <button class="primary-button" id="saveInvoice" type="submit">Save invoice</button>
+                  <button class="secondary-button" id="newInvoice" type="button">New</button>
+                  <button class="secondary-button" id="markPaid" type="button">Mark paid</button>
+                  <button class="secondary-button" id="printInvoice" type="button">Print / PDF</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="panel preview-panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Preview</p>
+                  <h2>Invoice Document</h2>
+                </div>
+                <span id="saveState" class="save-state">Unsaved</span>
+              </div>
+
+              <article class="invoice-sheet" id="invoicePreview" aria-label="Invoice preview"></article>
+            </section>
+          </div>
+
+          <section class="history-band">
+            <div class="section-heading">
+              <h2>Saved Invoices</h2>
+              <button class="small-button danger" id="clearPaid" type="button">Clear paid</button>
+            </div>
+            <div class="invoice-history" id="invoiceHistory"></div>
+          </section>
+        </section>
+
+        <section class="view view-tenants" id="view-tenants" aria-labelledby="tenantsHeading">
+          <div class="data-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Directory</p>
+                  <h1 id="tenantsHeading">Tenants</h1>
+                </div>
+                <button class="small-button" id="addTenant" type="button">Add tenant</button>
+              </div>
+              <div class="tenant-list" id="tenantList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Details</p>
+                  <h2 id="tenantFormHeading">Tenant Profile</h2>
+                </div>
+                <button class="small-button danger" id="deleteTenant" type="button">Delete</button>
+              </div>
+
+              <form id="tenantForm" class="stack">
+                <input type="hidden" id="tenantId" />
+                <div class="grid two">
+                  <label>
+                    Tenant name
+                    <input id="tenantName" type="text" autocomplete="name" required />
+                  </label>
+                  <label>
+                    Unit
+                    <input id="tenantUnit" type="text" autocomplete="off" />
+                  </label>
+                </div>
+                <label>
+                  Mailing address
+                  <textarea id="tenantAddress" rows="3"></textarea>
+                </label>
+                <div class="grid two">
+                  <label>
+                    Email
+                    <input id="tenantEmail" type="email" autocomplete="email" />
+                  </label>
+                  <label>
+                    Phone
+                    <input id="tenantPhone" type="tel" autocomplete="tel" />
+                  </label>
+                </div>
+                <div class="grid two">
+                  <label>
+                    Monthly rent
+                    <input id="tenantRent" type="number" min="0" step="0.01" />
+                  </label>
+                  <label>
+                    Default utility estimate
+                    <input id="tenantUtilities" type="number" min="0" step="0.01" />
+                  </label>
+                </div>
+                <label>
+                  Lease memo
+                  <textarea id="tenantMemo" rows="3"></textarea>
+                </label>
+                <div class="button-row">
+                  <button class="primary-button" type="submit">Save tenant</button>
+                  <button class="secondary-button" id="resetTenantForm" type="button">Reset</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="view view-settings" id="view-settings" aria-labelledby="settingsHeading">
+          <div class="data-layout settings-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Sender</p>
+                  <h1 id="settingsHeading">Landlord Settings</h1>
+                </div>
+              </div>
+
+              <form id="landlordForm" class="stack">
+                <label>
+                  Business or owner name
+                  <input id="landlordName" type="text" autocomplete="organization" />
+                </label>
+                <label>
+                  Address
+                  <textarea id="landlordAddress" rows="3"></textarea>
+                </label>
+                <div class="grid two">
+                  <label>
+                    Email
+                    <input id="landlordEmail" type="email" autocomplete="email" />
+                  </label>
+                  <label>
+                    Phone
+                    <input id="landlordPhone" type="tel" autocomplete="tel" />
+                  </label>
+                </div>
+                <label>
+                  Payment instructions
+                  <textarea id="paymentInstructions" rows="5"></textarea>
+                </label>
+                <div class="button-row">
+                  <button class="primary-button" type="submit">Save settings</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Totals</p>
+                  <h2>Portfolio Snapshot</h2>
+                </div>
+              </div>
+              <div class="metric-grid">
+                <div class="metric">
+                  <span>Tenants</span>
+                  <strong id="metricTenants">0</strong>
+                </div>
+                <div class="metric">
+                  <span>Open invoices</span>
+                  <strong id="metricOpen">0</strong>
+                </div>
+                <div class="metric">
+                  <span>Open balance</span>
+                  <strong id="metricBalance">$0.00</strong>
+                </div>
+                <div class="metric">
+                  <span>Paid invoices</span>
+                  <strong id="metricPaid">0</strong>
+                </div>
+              </div>
+              <div class="backup-tools">
+                <div>
+                  <p class="eyebrow">Backup</p>
+                  <h2>Local Safety Copies</h2>
+                  <p class="backup-copy">
+                    Recent changes are snapshotted in this browser. Export a JSON backup for a copy outside the browser.
+                  </p>
+                </div>
+                <div class="backup-status">
+                  <span id="backupCount">0 local backups</span>
+                  <strong id="backupLatest">No backup yet</strong>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="exportBackupSettings" type="button">Export backup</button>
+                  <button class="secondary-button" id="restoreLatestBackup" type="button">Restore latest</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

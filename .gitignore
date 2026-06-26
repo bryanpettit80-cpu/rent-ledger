@@ -1,0 +1,12 @@
+# Local runtime files
+*.log
+*.tmp
+*.bak
+
+# OS clutter
+Thumbs.db
+.DS_Store
+
+# Optional local backup/export folders
+backups/
+exports/
