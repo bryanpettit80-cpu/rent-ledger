@@ -60,10 +60,12 @@
   function bindElements() {
     [
       "tenantSelect",
+      "invoiceType",
       "invoiceNumber",
       "issueDate",
       "dueDate",
       "billingPeriod",
+      "utilityCalculator",
       "utilityMethod",
       "utilityTenantUnits",
       "utilityTotalUnits",
@@ -136,8 +138,22 @@
       draft.tenantId = selectedTenantId;
       const tenant = getTenant(selectedTenantId);
       if (tenant && !selectedInvoiceId) {
-        draft.lineItems = defaultLineItems(tenant);
+        draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, draft.lineItems);
         draft.utilityCalculation = defaultUtilityCalculation(tenant);
+      }
+      renderInvoiceEditor();
+      renderInvoicePreview();
+      markDirty();
+    });
+
+    els.invoiceType.addEventListener("change", () => {
+      const previousType = normalizeInvoiceType(draft.invoiceType);
+      syncDraftFromForm();
+      const tenant = getTenant(draft.tenantId);
+      draft.invoiceType = normalizeInvoiceType(els.invoiceType.value);
+      draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, draft.lineItems);
+      if (!selectedInvoiceId && isGeneratedInvoiceNumber(draft.invoiceNumber) && draft.invoiceType !== previousType) {
+        draft.invoiceNumber = nextInvoiceNumber(draft.invoiceType);
       }
       renderInvoiceEditor();
       renderInvoicePreview();
@@ -181,7 +197,7 @@
 
     els.addLineItem.addEventListener("click", () => {
       syncDraftFromForm();
-      draft.lineItems.push({ type: "Utility", description: "", amount: 0 });
+      draft.lineItems.push(defaultManualLineItem(draft.invoiceType));
       renderLineItems();
       renderInvoicePreview();
       renderTotals();
@@ -202,8 +218,8 @@
       syncDraftFromForm();
       const index = Number(removeButton.dataset.removeLine);
       draft.lineItems.splice(index, 1);
-      if (!draft.lineItems.length) {
-        draft.lineItems.push({ type: "Rent", description: "", amount: 0 });
+      if (!draft.lineItems.length && normalizeInvoiceType(draft.invoiceType) === "rent") {
+        draft.lineItems = defaultLineItems(getTenant(draft.tenantId), draft.invoiceType);
       }
       renderLineItems();
       renderInvoicePreview();
@@ -277,6 +293,9 @@
 
   function renderInvoiceEditor() {
     renderTenantOptions();
+    draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
+    els.invoiceType.value = draft.invoiceType;
+    els.utilityCalculator.hidden = !invoiceAllowsUtility(draft.invoiceType);
     els.invoiceNumber.value = draft.invoiceNumber;
     els.issueDate.value = draft.issueDate;
     els.dueDate.value = draft.dueDate;
@@ -293,6 +312,11 @@
   }
 
   function renderLineItems() {
+    if (!draft.lineItems.length) {
+      els.lineItems.innerHTML = `<div class="empty-state">No charges yet. Apply a utility charge or add an item.</div>`;
+      return;
+    }
+
     els.lineItems.innerHTML = draft.lineItems
       .map(
         (item, index) => `
@@ -335,6 +359,7 @@
     const landlordAddress = landlord.address || "";
     const paymentInstructions = invoice.paymentInstructions || landlord.paymentInstructions || "";
     const utilityDetails = utilityCalculationDetails(invoice.utilityCalculation);
+    const invoiceType = normalizeInvoiceType(invoice.invoiceType);
 
     els.invoicePreview.innerHTML = `
       <header class="invoice-doc-header">
@@ -347,7 +372,7 @@
           </div>
         </div>
         <div class="invoice-title">
-          <h2>Invoice</h2>
+          <h2>${escapeHtml(invoiceTypeLabel(invoiceType))}</h2>
           <p class="doc-muted">${escapeHtml(invoice.invoiceNumber || "")}</p>
         </div>
       </header>
@@ -364,6 +389,7 @@
           ${docFact("Issue date", formatDate(invoice.issueDate))}
           ${docFact("Due date", formatDate(invoice.dueDate))}
           ${docFact("Billing period", invoice.billingPeriod)}
+          ${docFact("Invoice type", invoiceTypeLabel(invoiceType))}
           ${docFact("Status", invoice.status === "paid" ? "Paid" : "Open")}
         </div>
       </section>
@@ -402,7 +428,7 @@
 
       <section class="doc-notes">
         <div class="doc-grid">
-          ${utilityDetails.hasTotal ? `
+          ${invoiceAllowsUtility(invoiceType) && utilityDetails.hasTotal ? `
           <div class="doc-block">
             <h3>Utility calculation</h3>
             <p>${escapeHtml(utilityDetails.explanation)}</p>
@@ -438,6 +464,10 @@
   }
 
   function renderUtilityCalculation() {
+    if (!invoiceAllowsUtility(draft.invoiceType)) {
+      els.utilityCalcResult.textContent = "Utility allocation is available for utility invoices.";
+      return;
+    }
     const details = utilityCalculationDetails(draft.utilityCalculation || {});
     if (!details.hasTotal) {
       els.utilityCalcResult.textContent = "Enter bills and units to calculate a utility share.";
@@ -447,6 +477,10 @@
   }
 
   function applyUtilityCharge() {
+    if (!invoiceAllowsUtility(draft.invoiceType)) {
+      showToast("Switch to a utility invoice first.");
+      return;
+    }
     const details = utilityCalculationDetails(draft.utilityCalculation || {});
     if (!details.hasTotal || details.share <= 0) {
       showToast("Enter utility bills and allocation units first.");
@@ -482,11 +516,12 @@
       .map((invoice) => {
         const tenant = getTenant(invoice.tenantId);
         const paid = invoice.status === "paid";
+        const invoiceType = normalizeInvoiceType(invoice.invoiceType);
         return `
           <article class="invoice-card">
             <div>
               <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
-              <p>${escapeHtml(invoice.billingPeriod || "")} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
+              <p>${escapeHtml(invoiceTypeLabel(invoiceType))} &middot; ${escapeHtml(invoice.billingPeriod || "")} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
           paid ? "Paid" : "Open"
         }</p>
             </div>
@@ -526,7 +561,7 @@
     els.tenantList.querySelectorAll("[data-create-tenant-invoice]").forEach((button) => {
       button.addEventListener("click", () => {
         selectedTenantId = button.dataset.createTenantInvoice;
-        startNewInvoice();
+        startNewInvoice("rent");
         setView("invoice");
       });
     });
@@ -570,9 +605,9 @@
     showToast("Invoice saved.");
   }
 
-  function startNewInvoice() {
+  function startNewInvoice(invoiceType = draft?.invoiceType || "rent") {
     selectedInvoiceId = "";
-    draft = createBlankInvoice(selectedTenantId || state.tenants[0]?.id || "");
+    draft = createBlankInvoice(selectedTenantId || state.tenants[0]?.id || "", invoiceType);
     renderInvoiceEditor();
     renderInvoicePreview();
     showToast("New invoice ready.");
@@ -743,6 +778,7 @@
 
   function syncDraftFromForm() {
     draft.tenantId = els.tenantSelect.value;
+    draft.invoiceType = normalizeInvoiceType(els.invoiceType.value);
     draft.invoiceNumber = els.invoiceNumber.value.trim();
     draft.issueDate = els.issueDate.value;
     draft.dueDate = els.dueDate.value;
@@ -772,6 +808,7 @@
     return {
       ...clone(draft),
       tenantId: draft.tenantId || selectedTenantId,
+      invoiceType: normalizeInvoiceType(draft.invoiceType),
       status: draft.status || "open",
       lineItems: draft.lineItems.map((item) => ({
         type: item.type || "Other",
@@ -785,19 +822,21 @@
     };
   }
 
-  function createBlankInvoice(tenantId) {
+  function createBlankInvoice(tenantId, invoiceType = "rent") {
     const tenant = getTenant(tenantId);
+    const normalizedType = normalizeInvoiceType(invoiceType);
     const issueDate = toDateInput(new Date());
     const dueDate = toDateInput(addDays(new Date(), 7));
-    const invoiceNumber = nextInvoiceNumber();
+    const invoiceNumber = nextInvoiceNumber(normalizedType);
     return {
       id: "",
       tenantId,
+      invoiceType: normalizedType,
       invoiceNumber,
       issueDate,
       dueDate,
       billingPeriod: monthLabel(new Date()),
-      lineItems: tenant ? defaultLineItems(tenant) : [{ type: "Rent", description: "Rent", amount: 0 }],
+      lineItems: tenant ? defaultLineItems(tenant, normalizedType) : defaultLineItems(null, normalizedType),
       utilityCalculation: defaultUtilityCalculation(tenant),
       previousBalance: 0,
       credits: 0,
@@ -808,12 +847,59 @@
     };
   }
 
-  function defaultLineItems(tenant) {
+  function defaultLineItems(tenant, invoiceType = "rent") {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    if (normalizedType === "utility") return [];
+    return rentLineItems(tenant);
+  }
+
+  function rentLineItems(tenant) {
     const items = [];
-    if (toNumber(tenant.rent) > 0) {
+    if (toNumber(tenant?.rent) > 0) {
       items.push({ type: "Rent", description: `${tenant.unit ? tenant.unit + " " : ""}Monthly rent`, amount: tenant.rent });
     }
     return items.length ? items : [{ type: "Rent", description: "Rent", amount: 0 }];
+  }
+
+  function lineItemsForInvoiceType(tenant, invoiceType, currentItems = []) {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    const nonRentItems = (currentItems || []).filter((item) => item.type !== "Rent");
+    if (normalizedType === "rent") return rentLineItems(tenant);
+    if (normalizedType === "utility") return nonRentItems;
+    return [...rentLineItems(tenant), ...nonRentItems];
+  }
+
+  function defaultManualLineItem(invoiceType) {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    if (normalizedType === "rent") return { type: "Fee", description: "", amount: 0 };
+    return { type: "Utility", description: "", amount: 0 };
+  }
+
+  function normalizeInvoiceType(value) {
+    return ["rent", "utility", "combined"].includes(value) ? value : "rent";
+  }
+
+  function invoiceAllowsUtility(invoiceType) {
+    return normalizeInvoiceType(invoiceType) !== "rent";
+  }
+
+  function invoiceTypeLabel(invoiceType) {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    if (normalizedType === "utility") return "Utility Invoice";
+    if (normalizedType === "combined") return "Rent + Utility Invoice";
+    return "Rent Invoice";
+  }
+
+  function inferInvoiceType(invoice) {
+    if (["rent", "utility", "combined"].includes(invoice?.invoiceType)) return invoice.invoiceType;
+    const lineItems = Array.isArray(invoice?.lineItems) ? invoice.lineItems : [];
+    const hasRent = lineItems.some((item) => item?.type === "Rent");
+    const hasUtility = lineItems.some((item) =>
+      item?.generatedUtility || ["Electric", "Water", "Gas", "Trash", "Internet", "Utility"].includes(item?.type)
+    );
+    if (hasRent && hasUtility) return "combined";
+    if (hasUtility) return "utility";
+    return "rent";
   }
 
   function defaultUtilityCalculation(tenant) {
@@ -1043,6 +1129,7 @@
   function normalizeInvoice(invoice) {
     return {
       ...invoice,
+      invoiceType: normalizeInvoiceType(inferInvoiceType(invoice)),
       utilityCalculation: normalizeUtilityCalculation(invoice?.utilityCalculation),
       lineItems: Array.isArray(invoice?.lineItems)
         ? invoice.lineItems.map((item) => ({
@@ -1061,15 +1148,27 @@
     });
   }
 
-  function nextInvoiceNumber() {
+  function nextInvoiceNumber(invoiceType = "rent") {
     const year = new Date().getFullYear();
+    const prefix = invoiceNumberPrefix(invoiceType);
     const existingNumbers = state.invoices
       .map((invoice) => invoice.invoiceNumber || "")
-      .filter((number) => number.startsWith(`INV-${year}-`))
+      .filter((number) => number.startsWith(`${prefix}-${year}-`))
       .map((number) => Number(number.split("-").pop()))
       .filter(Number.isFinite);
     const next = Math.max(0, ...existingNumbers) + 1;
-    return `INV-${year}-${String(next).padStart(4, "0")}`;
+    return `${prefix}-${year}-${String(next).padStart(4, "0")}`;
+  }
+
+  function invoiceNumberPrefix(invoiceType) {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    if (normalizedType === "utility") return "UTL";
+    if (normalizedType === "combined") return "INV";
+    return "RNT";
+  }
+
+  function isGeneratedInvoiceNumber(value) {
+    return /^(INV|RNT|UTL)-\d{4}-\d{4}$/.test(value || "");
   }
 
   function docFact(label, value) {

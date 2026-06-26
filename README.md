@@ -32,7 +32,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 
 ## Utility Calculations
 
-Use the Utility Allocation section on an invoice to enter the actual utility bills and allocation units.
+Use `Invoice type` to send rent and utilities separately. A `Rent invoice` includes the monthly rent line only. A `Utility invoice` opens the Utility Allocation section so you can enter the actual bills and apply the calculated utility charge. `Rent + utility` remains available if you ever need a combined document.
 
 - `Occupancy units` follows the lease formula: tenant occupancy units divided by total property occupancy units, multiplied by actual utility charges.
 - `Equal split` supports older invoices that split the utility total across tenants or shares and rounds the share up to the next cent.

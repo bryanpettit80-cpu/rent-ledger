@@ -51,10 +51,18 @@
               </div>
 
               <form id="invoiceForm" class="stack">
-                <div class="grid two">
+                <div class="grid three">
                   <label>
                     Tenant
                     <select id="tenantSelect" name="tenantId"></select>
+                  </label>
+                  <label>
+                    Invoice type
+                    <select id="invoiceType" name="invoiceType">
+                      <option value="rent">Rent invoice</option>
+                      <option value="utility">Utility invoice</option>
+                      <option value="combined">Rent + utility</option>
+                    </select>
                   </label>
                   <label>
                     Invoice #
@@ -77,7 +85,7 @@
                   </label>
                 </div>
 
-                <section class="utility-calculator" aria-labelledby="utilityCalcHeading">
+                <section class="utility-calculator" id="utilityCalculator" aria-labelledby="utilityCalcHeading">
                   <div class="section-heading">
                     <div>
                       <p class="eyebrow">Utilities</p>
