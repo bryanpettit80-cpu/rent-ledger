@@ -24,6 +24,12 @@ For access away from the current Wi-Fi network, publish the static app over HTTP
 
 Hosting the app online makes the app itself available anywhere. It does not make browser-local invoice data sync across devices. Shared data requires a backend with authentication and a database.
 
+Live app:
+
+```text
+https://bryanpettit80-cpu.github.io/rent-ledger/
+```
+
 ## Data Safety
 
 The app stores tenant and invoice data in your browser on the current device. It now keeps a rolling local backup history in browser storage, but browser storage is still not a permanent accounting archive.

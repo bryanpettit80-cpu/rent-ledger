@@ -9,6 +9,12 @@ This repository is now ready for the first concern. The app is a static PWA, so 
 
 The second concern needs a hosted backend with authentication and a database. The current app stores data in each browser's local storage, so desktop, phone, and tablet data are separate unless you export/import JSON backups.
 
+Current live URL:
+
+```text
+https://bryanpettit80-cpu.github.io/rent-ledger/
+```
+
 ## Recommended First Step: GitHub Pages
 
 GitHub Pages is a good fit for the app shell because there are no server dependencies and no build step.
