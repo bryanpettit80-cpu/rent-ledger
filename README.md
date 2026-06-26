@@ -17,7 +17,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Shows a live invoice preview before printing or saving.
 - Prints invoices to paper or PDF through the browser.
 - Saves invoice history in the current browser.
-- Exports and imports JSON backups.
+- Exports full JSON backups and imports tenant-only JSON files.
 - Keeps a rolling local backup history in browser storage.
 - Works on mobile and desktop screen sizes.
 - Installs service-worker offline support when served over HTTP or HTTPS.
@@ -136,7 +136,9 @@ Rent Ledger stores data in the browser on the current device.
 
 Use `Export backup` regularly. The exported JSON file is the portable copy you can store with your records or import on another device.
 
-Use `Import backup` to replace the current browser's local data with a saved backup file.
+Use `Import backup` to replace the current browser's local data with a saved full backup file.
+
+The same import control can also load a tenant-only JSON file. Tenant-only imports merge into the current browser data, update tenants with matching names, keep landlord settings and invoices, and preserve imported active/inactive status plus payment history in the tenant memo.
 
 Important:
 

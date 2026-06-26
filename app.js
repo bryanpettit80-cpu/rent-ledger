@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v6";
+  const APP_VERSION = "rent-ledger-v7";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
 
   const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -548,7 +548,9 @@
         <article class="tenant-card">
           <div>
             <h3>${escapeHtml(tenant.name)}</h3>
-            <p>${escapeHtml(tenant.unit || "No unit")} &middot; ${formatMoney(tenant.rent || 0)} rent</p>
+            <p>${escapeHtml(tenant.unit || "No unit")} &middot; ${formatMoney(tenant.rent || 0)} rent${
+          tenant.active === false ? " &middot; Inactive" : ""
+        }</p>
           </div>
           <div class="card-actions">
             <button class="small-button" data-edit-tenant="${escapeAttr(tenant.id)}" type="button">Edit</button>
@@ -678,6 +680,7 @@
   function saveTenant(event) {
     event.preventDefault();
     const id = els.tenantId.value || cryptoId();
+    const existingTenant = state.tenants.find((item) => item.id === id);
     const tenant = {
       id,
       name: els.tenantName.value.trim(),
@@ -687,6 +690,8 @@
       phone: els.tenantPhone.value.trim(),
       rent: toNumber(els.tenantRent.value),
       utilityUnits: toNumber(els.tenantUtilityUnits.value),
+      active: existingTenant?.active ?? true,
+      payments: existingTenant?.payments || [],
       memo: els.tenantMemo.value.trim(),
     };
 
@@ -1025,6 +1030,29 @@
     reader.onload = () => {
       try {
         const imported = JSON.parse(String(reader.result || "{}"));
+        const tenantImport = extractTenantImport(imported);
+
+        if (tenantImport) {
+          if (!window.confirm(`Import ${tenantImport.length} tenant${tenantImport.length === 1 ? "" : "s"} from this JSON? Existing tenants with matching names will be updated. Settings and invoices will be kept.`)) {
+            event.target.value = "";
+            return;
+          }
+          recordLocalBackup("Before tenant import", state);
+          state = normalizeState({
+            ...state,
+            tenants: mergeImportedTenants(currentImportBaseTenants(), tenantImport),
+          });
+          selectedTenantId = state.tenants[0]?.id || "";
+          selectedInvoiceId = "";
+          draft = createBlankInvoice(selectedTenantId);
+          saveState("Imported tenants");
+          fillLandlordForm();
+          fillTenantForm(selectedTenantId);
+          renderAll();
+          showToast(`Imported ${tenantImport.length} tenant${tenantImport.length === 1 ? "" : "s"}.`);
+          return;
+        }
+
         if (!window.confirm("Import this backup and replace local Rent Ledger data?")) {
           event.target.value = "";
           return;
@@ -1047,6 +1075,119 @@
       }
     };
     reader.readAsText(file);
+  }
+
+  function extractTenantImport(value) {
+    if (isFullStateBackup(value)) return null;
+
+    if (Array.isArray(value)) {
+      const tenants = value.map((tenant) => importedTenantFromObject(tenant?.name || "", tenant)).filter(Boolean);
+      return tenants.length ? tenants : null;
+    }
+
+    if (Array.isArray(value?.tenants)) {
+      const tenants = value.tenants.map((tenant) => importedTenantFromObject(tenant?.name || "", tenant)).filter(Boolean);
+      return tenants.length ? tenants : null;
+    }
+
+    if (!value || typeof value !== "object") return null;
+
+    const entries = Object.entries(value).filter(([, tenant]) => looksLikeTenantRecord(tenant));
+    if (!entries.length || entries.length !== Object.keys(value).length) return null;
+
+    return entries.map(([name, tenant]) => importedTenantFromObject(name, tenant)).filter(Boolean);
+  }
+
+  function isFullStateBackup(value) {
+    return Boolean(value?.landlord || value?.invoices);
+  }
+
+  function looksLikeTenantRecord(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return ["rent", "address", "payments", "active", "utilityUnits", "occupancyUnits"].some((key) =>
+      Object.prototype.hasOwnProperty.call(value, key)
+    );
+  }
+
+  function importedTenantFromObject(name, value) {
+    if (!value || typeof value !== "object") return null;
+    const tenantName = String(value.name || name || "").trim();
+    if (!tenantName) return null;
+    const payments = Array.isArray(value.payments) ? value.payments.map(normalizeImportedPayment).filter(Boolean) : [];
+    return {
+      id: value.id || cryptoId(),
+      name: tenantName,
+      unit: value.unit || "",
+      address: value.address || "",
+      email: value.email || "",
+      phone: value.phone || "",
+      rent: toNumber(value.rent),
+      utilityUnits: toNumber(value.utilityUnits || value.occupancyUnits || 1),
+      active: Object.prototype.hasOwnProperty.call(value, "active") ? Boolean(value.active) : true,
+      payments,
+      memo: importedTenantMemo(value, payments),
+    };
+  }
+
+  function normalizeImportedPayment(value) {
+    if (!value || typeof value !== "object") return null;
+    return {
+      amount: toNumber(value.amount),
+      date: String(value.date || "").trim(),
+      method: String(value.method || "").trim(),
+    };
+  }
+
+  function importedTenantMemo(value, payments) {
+    const parts = [];
+    if (value.memo) parts.push(String(value.memo).trim());
+    if (Object.prototype.hasOwnProperty.call(value, "active")) {
+      parts.push(`Imported status: ${value.active ? "Active" : "Inactive"}.`);
+    }
+    if (payments.length) {
+      parts.push(`Imported payments: ${payments.map(formatImportedPayment).join("; ")}.`);
+    }
+    return parts.filter(Boolean).join("\n");
+  }
+
+  function formatImportedPayment(payment) {
+    return `${payment.date || "undated"} ${payment.method || "payment"} ${formatMoney(payment.amount)}`;
+  }
+
+  function mergeImportedTenants(existingTenants, importedTenants) {
+    const merged = [...existingTenants];
+    const indexByName = new Map(merged.map((tenant, index) => [tenant.name.trim().toLowerCase(), index]));
+
+    importedTenants.forEach((tenant) => {
+      const key = tenant.name.trim().toLowerCase();
+      if (indexByName.has(key)) {
+        const index = indexByName.get(key);
+        const existing = merged[index];
+        merged[index] = {
+          ...existing,
+          ...tenant,
+          id: existing.id,
+          email: tenant.email || existing.email || "",
+          phone: tenant.phone || existing.phone || "",
+          unit: tenant.unit || existing.unit || "",
+        };
+      } else {
+        indexByName.set(key, merged.length);
+        merged.push(tenant);
+      }
+    });
+
+    return merged;
+  }
+
+  function currentImportBaseTenants() {
+    return hasOnlyDefaultSampleTenant(state.tenants) ? [] : state.tenants;
+  }
+
+  function hasOnlyDefaultSampleTenant(tenants) {
+    if (!Array.isArray(tenants) || tenants.length !== 1) return false;
+    const tenant = tenants[0];
+    return tenant?.name === "Sample Tenant" && tenant?.email === "tenant@example.com" && toNumber(tenant?.rent) === 1450;
   }
 
   function restoreLatestBackup() {

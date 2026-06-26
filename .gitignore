@@ -10,3 +10,5 @@ Thumbs.db
 # Optional local backup/export folders
 backups/
 exports/
+output/
+.codex-remote-attachments/
