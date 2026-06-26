@@ -77,6 +77,55 @@
                   </label>
                 </div>
 
+                <section class="utility-calculator" aria-labelledby="utilityCalcHeading">
+                  <div class="section-heading">
+                    <div>
+                      <p class="eyebrow">Utilities</p>
+                      <h2 id="utilityCalcHeading">Utility Allocation</h2>
+                    </div>
+                    <button class="small-button" id="applyUtilityCharge" type="button">Apply charge</button>
+                  </div>
+
+                  <div class="grid three">
+                    <label>
+                      Method
+                      <select id="utilityMethod">
+                        <option value="occupancyUnits">Occupancy units</option>
+                        <option value="equalSplit">Equal split</option>
+                      </select>
+                    </label>
+                    <label>
+                      Tenant units
+                      <input id="utilityTenantUnits" type="number" min="0" step="0.01" />
+                    </label>
+                    <label>
+                      Total units / shares
+                      <input id="utilityTotalUnits" type="number" min="0" step="0.01" />
+                    </label>
+                  </div>
+
+                  <div class="grid four">
+                    <label>
+                      Dominion / electric
+                      <input id="utilityElectric" type="number" min="0" step="0.01" />
+                    </label>
+                    <label>
+                      HRSD / water
+                      <input id="utilityWaterSewer" type="number" min="0" step="0.01" />
+                    </label>
+                    <label>
+                      Gas
+                      <input id="utilityGas" type="number" min="0" step="0.01" />
+                    </label>
+                    <label>
+                      Other utilities
+                      <input id="utilityOther" type="number" min="0" step="0.01" />
+                    </label>
+                  </div>
+
+                  <div class="utility-result" id="utilityCalcResult">Enter bills and units to calculate a utility share.</div>
+                </section>
+
                 <div class="section-heading">
                   <h2>Charges</h2>
                   <button class="small-button" id="addLineItem" type="button">Add item</button>
@@ -190,8 +239,8 @@
                     <input id="tenantRent" type="number" min="0" step="0.01" />
                   </label>
                   <label>
-                    Default utility estimate
-                    <input id="tenantUtilities" type="number" min="0" step="0.01" />
+                    Utility occupancy units
+                    <input id="tenantUtilityUnits" type="number" min="0" step="0.01" />
                   </label>
                 </div>
                 <label>

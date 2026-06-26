@@ -30,6 +30,14 @@ Live app:
 https://bryanpettit80-cpu.github.io/rent-ledger/
 ```
 
+## Utility Calculations
+
+Use the Utility Allocation section on an invoice to enter the actual utility bills and allocation units.
+
+- `Occupancy units` follows the lease formula: tenant occupancy units divided by total property occupancy units, multiplied by actual utility charges.
+- `Equal split` supports older invoices that split the utility total across tenants or shares and rounds the share up to the next cent.
+- The generated invoice shows the bill inputs, allocation math, and the calculated utility line item.
+
 ## Data Safety
 
 The app stores tenant and invoice data in your browser on the current device. It now keeps a rolling local backup history in browser storage, but browser storage is still not a permanent accounting archive.

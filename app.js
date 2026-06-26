@@ -30,7 +30,7 @@
         email: "tenant@example.com",
         phone: "(555) 010-3344",
         rent: 1450,
-        utilities: 185,
+        utilityUnits: 1.5,
         memo: "Replace this sample with your tenant details.",
       },
     ],
@@ -64,6 +64,15 @@
       "issueDate",
       "dueDate",
       "billingPeriod",
+      "utilityMethod",
+      "utilityTenantUnits",
+      "utilityTotalUnits",
+      "utilityElectric",
+      "utilityWaterSewer",
+      "utilityGas",
+      "utilityOther",
+      "utilityCalcResult",
+      "applyUtilityCharge",
       "lineItems",
       "previousBalance",
       "credits",
@@ -91,7 +100,7 @@
       "tenantEmail",
       "tenantPhone",
       "tenantRent",
-      "tenantUtilities",
+      "tenantUtilityUnits",
       "tenantMemo",
       "resetTenantForm",
       "landlordForm",
@@ -122,13 +131,14 @@
     });
 
     els.tenantSelect.addEventListener("change", () => {
+      syncDraftFromForm();
       selectedTenantId = els.tenantSelect.value;
       draft.tenantId = selectedTenantId;
       const tenant = getTenant(selectedTenantId);
       if (tenant && !selectedInvoiceId) {
         draft.lineItems = defaultLineItems(tenant);
+        draft.utilityCalculation = defaultUtilityCalculation(tenant);
       }
-      syncDraftFromForm();
       renderInvoiceEditor();
       renderInvoicePreview();
       markDirty();
@@ -139,16 +149,34 @@
       els.issueDate,
       els.dueDate,
       els.billingPeriod,
+      els.utilityMethod,
+      els.utilityTenantUnits,
+      els.utilityTotalUnits,
+      els.utilityElectric,
+      els.utilityWaterSewer,
+      els.utilityGas,
+      els.utilityOther,
       els.previousBalance,
       els.credits,
       els.invoiceNotes,
     ].forEach((input) => {
       input.addEventListener("input", () => {
         syncDraftFromForm();
+        renderUtilityCalculation();
         renderInvoicePreview();
         renderTotals();
         markDirty();
       });
+    });
+
+    els.applyUtilityCharge.addEventListener("click", () => {
+      syncDraftFromForm();
+      applyUtilityCharge();
+      renderLineItems();
+      renderUtilityCalculation();
+      renderInvoicePreview();
+      renderTotals();
+      markDirty();
     });
 
     els.addLineItem.addEventListener("click", () => {
@@ -253,12 +281,14 @@
     els.issueDate.value = draft.issueDate;
     els.dueDate.value = draft.dueDate;
     els.billingPeriod.value = draft.billingPeriod;
+    fillUtilityCalculationForm(draft.utilityCalculation || defaultUtilityCalculation(getTenant(draft.tenantId)));
     els.previousBalance.value = normalizeNumberInput(draft.previousBalance);
     els.credits.value = normalizeNumberInput(draft.credits);
     els.invoiceNotes.value = draft.notes;
     els.invoiceStatus.textContent = draft.status === "paid" ? "Paid" : selectedInvoiceId ? "Open" : "Draft";
     els.saveState.textContent = selectedInvoiceId ? "Saved" : "Unsaved";
     renderLineItems();
+    renderUtilityCalculation();
     renderTotals();
   }
 
@@ -266,7 +296,7 @@
     els.lineItems.innerHTML = draft.lineItems
       .map(
         (item, index) => `
-        <div class="line-item">
+        <div class="line-item" data-generated-utility="${item.generatedUtility ? "true" : "false"}">
           <label>
             Type
             <select data-line-type="${index}">
@@ -304,6 +334,7 @@
     const tenantAddress = tenant?.address || "";
     const landlordAddress = landlord.address || "";
     const paymentInstructions = invoice.paymentInstructions || landlord.paymentInstructions || "";
+    const utilityDetails = utilityCalculationDetails(invoice.utilityCalculation);
 
     els.invoicePreview.innerHTML = `
       <header class="invoice-doc-header">
@@ -371,6 +402,12 @@
 
       <section class="doc-notes">
         <div class="doc-grid">
+          ${utilityDetails.hasTotal ? `
+          <div class="doc-block">
+            <h3>Utility calculation</h3>
+            <p>${escapeHtml(utilityDetails.explanation)}</p>
+            <p class="doc-muted">${escapeHtml(utilityDetails.billSummary)}</p>
+          </div>` : ""}
           <div class="doc-block">
             <h3>Payment</h3>
             <p>${formatMultiline(paymentInstructions)}</p>
@@ -387,6 +424,48 @@
   function renderTotals() {
     const invoice = getDraftSnapshot();
     els.totalDue.textContent = formatMoney(calculateTotal(invoice));
+  }
+
+  function fillUtilityCalculationForm(calculation) {
+    const current = normalizeUtilityCalculation(calculation);
+    els.utilityMethod.value = current.method;
+    els.utilityTenantUnits.value = normalizeNumberInput(current.tenantUnits);
+    els.utilityTotalUnits.value = normalizeNumberInput(current.totalUnits);
+    els.utilityElectric.value = normalizeNumberInput(current.electric);
+    els.utilityWaterSewer.value = normalizeNumberInput(current.waterSewer);
+    els.utilityGas.value = normalizeNumberInput(current.gas);
+    els.utilityOther.value = normalizeNumberInput(current.other);
+  }
+
+  function renderUtilityCalculation() {
+    const details = utilityCalculationDetails(draft.utilityCalculation || {});
+    if (!details.hasTotal) {
+      els.utilityCalcResult.textContent = "Enter bills and units to calculate a utility share.";
+      return;
+    }
+    els.utilityCalcResult.textContent = `${details.explanation} ${details.billSummary}`;
+  }
+
+  function applyUtilityCharge() {
+    const details = utilityCalculationDetails(draft.utilityCalculation || {});
+    if (!details.hasTotal || details.share <= 0) {
+      showToast("Enter utility bills and allocation units first.");
+      return;
+    }
+
+    const line = {
+      type: "Utility",
+      description: utilityLineDescription(draft.utilityCalculation),
+      amount: details.share,
+      generatedUtility: true,
+    };
+    const existingIndex = draft.lineItems.findIndex((item) => item.generatedUtility);
+    if (existingIndex >= 0) {
+      draft.lineItems[existingIndex] = line;
+    } else {
+      draft.lineItems.push(line);
+    }
+    showToast("Utility charge applied.");
   }
 
   function renderInvoiceHistory() {
@@ -570,7 +649,7 @@
       email: els.tenantEmail.value.trim(),
       phone: els.tenantPhone.value.trim(),
       rent: toNumber(els.tenantRent.value),
-      utilities: toNumber(els.tenantUtilities.value),
+      utilityUnits: toNumber(els.tenantUtilityUnits.value),
       memo: els.tenantMemo.value.trim(),
     };
 
@@ -604,7 +683,7 @@
       email: "",
       phone: "",
       rent: "",
-      utilities: "",
+      utilityUnits: 1,
       memo: "",
     };
     tenantEditorId = tenant.id;
@@ -615,7 +694,7 @@
     els.tenantEmail.value = tenant.email || "";
     els.tenantPhone.value = tenant.phone || "";
     els.tenantRent.value = normalizeNumberInput(tenant.rent);
-    els.tenantUtilities.value = normalizeNumberInput(tenant.utilities);
+    els.tenantUtilityUnits.value = normalizeNumberInput(tenant.utilityUnits || 1);
     els.tenantMemo.value = tenant.memo || "";
     els.tenantFormHeading.textContent = tenant.id ? "Tenant Profile" : "New Tenant";
     els.deleteTenant.disabled = !tenant.id;
@@ -668,6 +747,15 @@
     draft.issueDate = els.issueDate.value;
     draft.dueDate = els.dueDate.value;
     draft.billingPeriod = els.billingPeriod.value.trim();
+    draft.utilityCalculation = {
+      method: els.utilityMethod.value || "occupancyUnits",
+      tenantUnits: toNumber(els.utilityTenantUnits.value),
+      totalUnits: toNumber(els.utilityTotalUnits.value),
+      electric: toNumber(els.utilityElectric.value),
+      waterSewer: toNumber(els.utilityWaterSewer.value),
+      gas: toNumber(els.utilityGas.value),
+      other: toNumber(els.utilityOther.value),
+    };
     draft.previousBalance = toNumber(els.previousBalance.value);
     draft.credits = toNumber(els.credits.value);
     draft.notes = els.invoiceNotes.value.trim();
@@ -676,6 +764,7 @@
       type: row.querySelector(`[data-line-type="${index}"]`)?.value || "Other",
       description: row.querySelector(`[data-line-description="${index}"]`)?.value.trim() || "",
       amount: toNumber(row.querySelector(`[data-line-amount="${index}"]`)?.value),
+      generatedUtility: row.dataset.generatedUtility === "true",
     }));
   }
 
@@ -688,7 +777,9 @@
         type: item.type || "Other",
         description: item.description || "",
         amount: toNumber(item.amount),
+        generatedUtility: Boolean(item.generatedUtility),
       })),
+      utilityCalculation: normalizeUtilityCalculation(draft.utilityCalculation),
       previousBalance: toNumber(draft.previousBalance),
       credits: toNumber(draft.credits),
     };
@@ -707,6 +798,7 @@
       dueDate,
       billingPeriod: monthLabel(new Date()),
       lineItems: tenant ? defaultLineItems(tenant) : [{ type: "Rent", description: "Rent", amount: 0 }],
+      utilityCalculation: defaultUtilityCalculation(tenant),
       previousBalance: 0,
       credits: 0,
       notes: "",
@@ -721,10 +813,66 @@
     if (toNumber(tenant.rent) > 0) {
       items.push({ type: "Rent", description: `${tenant.unit ? tenant.unit + " " : ""}Monthly rent`, amount: tenant.rent });
     }
-    if (toNumber(tenant.utilities) > 0) {
-      items.push({ type: "Utility", description: "Utilities", amount: tenant.utilities });
-    }
     return items.length ? items : [{ type: "Rent", description: "Rent", amount: 0 }];
+  }
+
+  function defaultUtilityCalculation(tenant) {
+    return {
+      method: "occupancyUnits",
+      tenantUnits: toNumber(tenant?.utilityUnits || 1),
+      totalUnits: 0,
+      electric: 0,
+      waterSewer: 0,
+      gas: 0,
+      other: 0,
+    };
+  }
+
+  function normalizeUtilityCalculation(calculation) {
+    return {
+      method: calculation?.method === "equalSplit" ? "equalSplit" : "occupancyUnits",
+      tenantUnits: toNumber(calculation?.tenantUnits),
+      totalUnits: toNumber(calculation?.totalUnits),
+      electric: toNumber(calculation?.electric),
+      waterSewer: toNumber(calculation?.waterSewer),
+      gas: toNumber(calculation?.gas),
+      other: toNumber(calculation?.other),
+    };
+  }
+
+  function utilityCalculationDetails(calculation) {
+    const current = normalizeUtilityCalculation(calculation);
+    const totalCharges = roundMoney(current.electric + current.waterSewer + current.gas + current.other);
+    const hasTotal = totalCharges > 0;
+    let share = 0;
+    let explanation = "";
+
+    if (current.method === "equalSplit") {
+      share = current.totalUnits > 0 ? roundMoneyUp(totalCharges / current.totalUnits) : 0;
+      explanation = `Utility share = ${formatMoney(totalCharges)} / ${formatNumber(current.totalUnits)} shares = ${formatMoney(share)}.`;
+    } else {
+      share = current.totalUnits > 0
+        ? roundMoney((current.tenantUnits / current.totalUnits) * totalCharges)
+        : 0;
+      explanation = `Utility share = ${formatNumber(current.tenantUnits)} / ${formatNumber(current.totalUnits)} x ${formatMoney(totalCharges)} = ${formatMoney(share)}.`;
+    }
+
+    return {
+      ...current,
+      totalCharges,
+      hasTotal,
+      share,
+      explanation,
+      billSummary: `Bills: Dominion/electric ${formatMoney(current.electric)}, HRSD/water ${formatMoney(current.waterSewer)}, gas ${formatMoney(current.gas)}, other ${formatMoney(current.other)}.`,
+    };
+  }
+
+  function utilityLineDescription(calculation) {
+    const details = utilityCalculationDetails(calculation);
+    if (details.method === "equalSplit") {
+      return `Utilities - equal split of ${formatMoney(details.totalCharges)} across ${formatNumber(details.totalUnits)} shares`;
+    }
+    return `Utilities - ${formatNumber(details.tenantUnits)} of ${formatNumber(details.totalUnits)} occupancy units`;
   }
 
   function getTenant(id) {
@@ -752,11 +900,11 @@
       const stored = localStorage.getItem(STORAGE_KEY);
       if (!stored) return clone(defaultState);
       const parsed = JSON.parse(stored);
-      return {
+      return normalizeState({
         landlord: { ...defaultState.landlord, ...(parsed.landlord || {}) },
         tenants: Array.isArray(parsed.tenants) ? parsed.tenants : clone(defaultState.tenants),
         invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-      };
+      });
     } catch (error) {
       console.warn("Unable to load saved Rent Ledger data.", error);
       return clone(defaultState);
@@ -879,8 +1027,30 @@
   function normalizeState(value) {
     return {
       landlord: { ...defaultState.landlord, ...(value?.landlord || {}) },
-      tenants: Array.isArray(value?.tenants) ? value.tenants : [],
-      invoices: Array.isArray(value?.invoices) ? value.invoices : [],
+      tenants: Array.isArray(value?.tenants) ? value.tenants.map(normalizeTenant) : [],
+      invoices: Array.isArray(value?.invoices) ? value.invoices.map(normalizeInvoice) : [],
+    };
+  }
+
+  function normalizeTenant(tenant) {
+    return {
+      ...tenant,
+      utilityUnits: toNumber(tenant?.utilityUnits || 1),
+      utilities: toNumber(tenant?.utilities),
+    };
+  }
+
+  function normalizeInvoice(invoice) {
+    return {
+      ...invoice,
+      utilityCalculation: normalizeUtilityCalculation(invoice?.utilityCalculation),
+      lineItems: Array.isArray(invoice?.lineItems)
+        ? invoice.lineItems.map((item) => ({
+            ...item,
+            amount: toNumber(item?.amount),
+            generatedUtility: Boolean(item?.generatedUtility),
+          }))
+        : [],
     };
   }
 
@@ -952,6 +1122,11 @@
     }).format(date);
   }
 
+  function formatNumber(value) {
+    const number = toNumber(value);
+    return Number.isInteger(number) ? String(number) : String(roundMoney(number));
+  }
+
   function monthLabel(date) {
     return new Intl.DateTimeFormat("en-US", {
       month: "long",
@@ -991,6 +1166,10 @@
 
   function roundMoney(value) {
     return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+  }
+
+  function roundMoneyUp(value) {
+    return Math.ceil((toNumber(value) - 1e-9) * 100) / 100;
   }
 
   function normalizeNumberInput(value) {

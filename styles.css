@@ -249,6 +249,10 @@ h2 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 label {
   display: grid;
   gap: 7px;
@@ -294,6 +298,27 @@ button:focus-visible {
 .line-items {
   display: grid;
   gap: 10px;
+}
+
+.utility-calculator {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-muted);
+}
+
+.utility-result {
+  min-height: 46px;
+  border: 1px solid #d6ddd5;
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--brand);
+  background: #fff;
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .line-item {
@@ -733,6 +758,7 @@ button:focus-visible {
 
   .grid.two,
   .grid.three,
+  .grid.four,
   .line-item,
   .doc-grid {
     grid-template-columns: 1fr;
