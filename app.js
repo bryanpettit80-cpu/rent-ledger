@@ -2,6 +2,8 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
+  const APP_VERSION = "rent-ledger-v6";
+  const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
 
   const moneyFormatter = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -1143,9 +1145,45 @@
 
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
-    navigator.serviceWorker.register("sw.js").catch((error) => {
-      console.warn("Service worker registration failed.", error);
+    let isRefreshing = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      try {
+        if (sessionStorage.getItem(APP_REFRESH_KEY)) return;
+        sessionStorage.setItem(APP_REFRESH_KEY, "1");
+      } catch (error) {
+        console.warn("Unable to record app refresh state.", error);
+      }
+      window.location.reload();
     });
+
+    navigator.serviceWorker
+      .register("sw.js", { updateViaCache: "none" })
+      .then((registration) => {
+        activateWaitingServiceWorker(registration.waiting);
+        registration.update().catch((error) => {
+          console.warn("Service worker update check failed.", error);
+        });
+        registration.addEventListener("updatefound", () => {
+          const installingWorker = registration.installing;
+          if (!installingWorker) return;
+          installingWorker.addEventListener("statechange", () => {
+            if (installingWorker.state === "installed" && navigator.serviceWorker.controller) {
+              activateWaitingServiceWorker(installingWorker);
+            }
+          });
+        });
+      })
+      .catch((error) => {
+        console.warn("Service worker registration failed.", error);
+      });
+  }
+
+  function activateWaitingServiceWorker(worker) {
+    if (!worker) return;
+    worker.postMessage({ type: "SKIP_WAITING" });
   }
 
   function nextInvoiceNumber(invoiceType = "rent") {
