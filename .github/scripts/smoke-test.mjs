@@ -50,7 +50,19 @@ try {
   const rentCycleDate = currentRentCycleDate();
   const expectedRentPeriod = monthLabel(rentCycleDate);
   const expectedUtilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
+  await page.route("**/sw.js", (route) => route.abort());
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+
+  await page.evaluate(async () => {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  });
 
   await page.evaluate((version) => {
     const state = {
@@ -93,6 +105,7 @@ try {
     };
     localStorage.clear();
     sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
   }, appVersion);
 
