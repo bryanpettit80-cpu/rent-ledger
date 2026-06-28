@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v17";
+  const APP_VERSION = "rent-ledger-v18";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -122,7 +122,6 @@
       "newInvoice",
       "markPaid",
       "printInvoice",
-      "saveInvoicePdfDrive",
       "clearPaid",
       "tenantList",
       "addTenant",
@@ -189,13 +188,7 @@
 
     els.tenantSelect.addEventListener("change", () => {
       syncDraftFromForm();
-      selectedTenantId = els.tenantSelect.value;
-      draft.tenantId = selectedTenantId;
-      const tenant = getTenant(selectedTenantId);
-      if (tenant && !selectedInvoiceId) {
-        draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, draft.lineItems);
-        draft.utilityCalculation = defaultUtilityCalculation(tenant);
-      }
+      applyTenantDefaultsToDraft(els.tenantSelect.value, { force: true, keepCurrentItems: true });
       renderInvoiceEditor();
       renderInvoicePreview();
       renderOverview();
@@ -206,7 +199,8 @@
       const previousType = normalizeInvoiceType(draft.invoiceType);
       syncDraftFromForm();
       const tenant = getTenant(draft.tenantId);
-      draft.invoiceType = normalizeInvoiceType(els.invoiceType.value);
+      draft.invoiceType = normalizeInvoiceType(els.invoiceType.value) === "utility" ? "utility" : "rent";
+      currentWorkflow = draft.invoiceType;
       draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, draft.lineItems);
       if (!selectedInvoiceId && isGeneratedInvoiceNumber(draft.invoiceNumber) && draft.invoiceType !== previousType) {
         draft.invoiceNumber = nextInvoiceNumber(draft.invoiceType);
@@ -316,13 +310,12 @@
     els.newInvoice.addEventListener("click", () => startNewInvoice(currentWorkflow));
     els.markPaid.addEventListener("click", markInvoicePaid);
     els.printInvoice.addEventListener("click", () => window.print());
-    els.saveInvoicePdfDrive.addEventListener("click", saveInvoicePdfToDrive);
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
     els.overviewInvoiceList.addEventListener("click", handleInvoiceHistoryClick);
-    els.exportBackupSettings.addEventListener("click", exportBackup);
-    els.importBackup.addEventListener("change", importBackup);
-    els.restoreLatestBackup.addEventListener("click", restoreLatestBackup);
+    if (els.exportBackupSettings) els.exportBackupSettings.addEventListener("click", exportBackup);
+    if (els.importBackup) els.importBackup.addEventListener("change", importBackup);
+    if (els.restoreLatestBackup) els.restoreLatestBackup.addEventListener("click", restoreLatestBackup);
   }
 
   function renderAll() {
@@ -374,9 +367,13 @@
   function setInvoiceWorkflow(invoiceType, options = {}) {
     const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
     currentWorkflow = nextType;
-    if (!options.preserveDraft && normalizeInvoiceType(draft.invoiceType) !== nextType) {
+    if (normalizeInvoiceType(draft.invoiceType) !== nextType) {
       startNewInvoice(nextType, { silent: true });
       return;
+    }
+    draft.invoiceType = nextType;
+    if (!selectedInvoiceId) {
+      applyTenantDefaultsToDraft(draft.tenantId || selectedTenantId, { force: false });
     }
     renderInvoiceEditor();
     renderInvoicePreview();
@@ -406,7 +403,8 @@
       return;
     }
 
-    const selectedTenant = getTenant(selectedTenantId || draft.tenantId);
+    const preferredTenantId = selectedTenantId || draft.tenantId;
+    const selectedTenant = getTenant(preferredTenantId);
     const includeSelectedInactive = selectedTenant && selectedTenant.active === false && selectedInvoiceId;
     els.tenantSelect.innerHTML = activeTenants
       .map((tenant) => {
@@ -423,17 +421,25 @@
           : []
       )
       .join("");
-    if (!activeTenants.some((tenant) => tenant.id === selectedTenantId) && !includeSelectedInactive) {
+    const previousTenantId = draft.tenantId;
+    if (activeTenants.some((tenant) => tenant.id === preferredTenantId) || includeSelectedInactive) {
+      selectedTenantId = preferredTenantId;
+      if (!selectedInvoiceId) draft.tenantId = preferredTenantId;
+    } else {
       selectedTenantId = activeTenants[0].id;
       if (!selectedInvoiceId) draft.tenantId = selectedTenantId;
     }
     els.tenantSelect.value = selectedTenantId || draft.tenantId || activeTenants[0].id;
+    if (!selectedInvoiceId && draft.tenantId && draft.tenantId !== previousTenantId) {
+      applyTenantDefaultsToDraft(draft.tenantId, { force: true });
+    }
   }
 
   function renderInvoiceEditor() {
     renderTenantOptions();
     draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
     currentWorkflow = draft.invoiceType === "utility" ? "utility" : "rent";
+    renderInvoiceTypeOptions(draft.invoiceType);
     renderWorkflowHeader(draft.invoiceType);
     els.invoiceType.value = draft.invoiceType;
     els.utilityCalculator.hidden = !invoiceAllowsUtility(draft.invoiceType);
@@ -450,6 +456,22 @@
     renderLineItems();
     renderUtilityCalculation();
     renderTotals();
+  }
+
+  function renderInvoiceTypeOptions(invoiceType) {
+    const type = normalizeInvoiceType(invoiceType);
+    const options =
+      type === "utility"
+        ? [{ value: "utility", label: "Utility invoice" }]
+        : [{ value: "rent", label: "Rent invoice" }];
+
+    if (selectedInvoiceId && type === "combined") {
+      options.push({ value: "combined", label: "Combined invoice" });
+    }
+
+    els.invoiceType.innerHTML = options
+      .map((option) => `<option value="${option.value}">${option.label}</option>`)
+      .join("");
   }
 
   function renderWorkflowHeader(invoiceType) {
@@ -799,6 +821,20 @@
     return getUtilityBillableTenants()[0]?.id || "";
   }
 
+  function applyTenantDefaultsToDraft(tenantId, options = {}) {
+    selectedTenantId = tenantId || "";
+    draft.tenantId = selectedTenantId;
+
+    const tenant = getTenant(selectedTenantId);
+    if (!tenant || selectedInvoiceId) return;
+
+    const currentItems = options.keepCurrentItems ? draft.lineItems : [];
+    if (options.force || !draft.lineItems.length) {
+      draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, currentItems);
+      draft.utilityCalculation = defaultUtilityCalculation(tenant);
+    }
+  }
+
   function renderMetrics() {
     const openInvoices = state.invoices.filter((invoice) => invoice.status !== "paid");
     const paidInvoices = state.invoices.filter((invoice) => invoice.status === "paid");
@@ -932,12 +968,13 @@
       .join("");
   }
 
-  function saveInvoice(event) {
+  async function saveInvoice(event) {
     event.preventDefault();
     const invoice = persistCurrentInvoice("Saved invoice");
     if (!invoice) return;
     renderAll();
-    showToast("Invoice saved.");
+    const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+    showToast(driveSaved ? "Invoice saved to browser and Drive." : "Invoice saved locally. Drive save skipped.");
   }
 
   function persistCurrentInvoice(reason) {
@@ -1080,8 +1117,11 @@
 
     tenantEditorId = id;
     if (tenant.active) {
-      selectedTenantId = id;
-      if (!draft.tenantId) draft.tenantId = id;
+      if (!selectedInvoiceId) {
+        applyTenantDefaultsToDraft(id, { force: true });
+      } else {
+        selectedTenantId = id;
+      }
     } else {
       selectedTenantId = firstActiveTenantId() || "";
       if (!selectedInvoiceId && draft.tenantId === id) {
@@ -1330,7 +1370,7 @@
   function invoiceTypeLabel(invoiceType) {
     const normalizedType = normalizeInvoiceType(invoiceType);
     if (normalizedType === "utility") return "Utility Invoice";
-    if (normalizedType === "combined") return "Rent + Utility Invoice";
+    if (normalizedType === "combined") return "Combined Invoice";
     return "Rent Invoice";
   }
 
@@ -1598,37 +1638,29 @@
     }
   }
 
-  async function saveInvoicePdfToDrive() {
+  async function saveInvoiceArtifactsToDrive(invoice) {
     saveDriveSettings(false);
-    const invoice = persistCurrentInvoice("Saved invoice");
-    if (!invoice) return;
-    renderAll();
-
     if (!appSettings.googleClientId) {
       renderDriveStatus("Add a Google OAuth client ID.");
-      showToast("Add a Google OAuth client ID first.");
-      return;
+      return false;
     }
     if (!isValidGoogleClientId(appSettings.googleClientId)) {
       renderDriveStatus("Use the full Web application OAuth client ID.");
-      showToast("Use the full OAuth client ID.");
-      return;
+      return false;
     }
 
     try {
-      if (!driveAccessToken) {
-        if (!(await ensureDriveAccess("saving invoice PDF"))) return;
-      }
-      renderDriveStatus("Saving invoice PDF to Drive...");
+      if (!(await ensureDriveAccess("saving invoice"))) return false;
+      renderDriveStatus("Saving invoice to Drive...");
       await uploadDriveState();
       const pdfBlob = createInvoicePdfBlob(invoice);
       const file = await uploadInvoicePdf(invoice, pdfBlob);
       renderDriveStatus(`Saved ${file.name || "invoice PDF"} to Drive.`);
-      showToast("Invoice PDF saved to Drive.");
+      return true;
     } catch (error) {
       console.error(error);
       renderDriveStatus("Invoice PDF save failed. Local invoice kept.");
-      showToast("Invoice PDF save failed.");
+      return false;
     }
   }
 

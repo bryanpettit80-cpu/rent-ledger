@@ -10,7 +10,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 
 ## What It Does
 
-- Creates separate `Rent invoice`, `Utility invoice`, or `Rent + utility` invoices.
+- Creates separate `Rent invoice` and `Utility invoice` records.
 - Stores tenant profiles, landlord contact details, and payment instructions.
 - Calculates utility reimbursements from actual utility bills.
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
@@ -18,8 +18,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Prints invoices to paper or PDF through the browser.
 - Generates invoice PDFs and saves them to Google Drive when Drive is connected.
 - Saves invoice history in the current browser.
-- Exports full JSON backups and imports tenant-only JSON files.
-- Keeps a rolling local backup history in browser storage.
+- Keeps local browser state and can sync that state to Google Drive.
 - Separates active and inactive tenants.
 - Optionally syncs the app state to Google Drive after Google Drive is connected.
 - Works on mobile and desktop screen sizes.
@@ -94,19 +93,9 @@ Utility invoices:
 - Add the calculated utility reimbursement as a generated charge line.
 - Show the allocation math on the invoice preview.
 
-### Rent + Utility Invoice
-
-Use `Rent + utility` only when you intentionally want one combined invoice.
-
-Combined invoices:
-
-- Use invoice numbers like `INV-2026-0001`.
-- Include rent plus utility charges.
-- Keep the utility calculation details on the invoice.
-
 ## Utility Calculations
 
-Open the Utility Allocation section on a `Utility invoice` or `Rent + utility` invoice.
+Open the Utility Allocation section on a `Utility invoice`.
 
 ### Occupancy Units
 
@@ -136,7 +125,7 @@ The equal-split method rounds up to the next cent to match the prior utility inv
 
 ## Printing And PDFs
 
-Use `Print / PDF` from the invoice screen.
+Use `Print` from the invoice screen.
 
 In the browser print dialog:
 
@@ -144,7 +133,7 @@ In the browser print dialog:
 - Choose `Save as PDF` or `Microsoft Print to PDF` for a PDF file.
 
 The preview shown in the app is the document intended for printing.
-The print layout is compact and targets one letter-size page for normal rent, utility, and combined invoices.
+The print layout is compact and targets one letter-size page for normal rent and utility invoices.
 
 ## Tenants
 
@@ -161,16 +150,6 @@ Inactive tenants:
 - Stay in the app for history and old invoices.
 - Do not appear in the active tenant list.
 - Can be restored with `Make active`.
-
-## Backups
-
-Rent Ledger stores data in the browser on the current device.
-
-Use `Export backup` regularly. The exported JSON file is the portable copy you can store with your records or import on another device.
-
-Use `Import backup` to replace the current browser's local data with a saved full backup file.
-
-The same import control can also load a tenant-only JSON file. Tenant-only imports merge into the current browser data, update tenants with matching names, keep landlord settings and invoices, and preserve imported active/inactive status plus payment history in the tenant memo.
 
 ## Google Drive Sync
 
@@ -198,9 +177,9 @@ In `Settings`:
 4. Use `Load from Drive` or `Save now`.
 5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
 
-When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then auto-sync the JSON state to Drive while the Drive connection is active.
+When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then can sync the JSON state to Drive.
 
-The invoice screen also has `Save PDF to Drive`. That button saves the current invoice locally, updates the Drive state JSON, generates a PDF, and uploads it to:
+The invoice screen has one `Save` button. It saves the current invoice to the browser, updates the Drive state JSON when Drive is available, generates a PDF, and uploads the PDF to:
 
 ```text
 Rent Ledger/Invoices/
@@ -208,7 +187,7 @@ Rent Ledger/Invoices/
 
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 
-When you click a Drive action such as `Save now`, `Load from Drive`, `Save PDF to Drive`, or `Connect Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
+When you click a Drive action such as `Save`, `Save now`, `Load from Drive`, or `Connect Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
 
 Important:
 
@@ -218,7 +197,7 @@ Important:
 
 ## Data And Privacy
 
-This app is local-first. Tenant and invoice data stays in the browser unless you export a backup file or connect Google Drive sync.
+This app is local-first. Tenant and invoice data stays in the browser unless you connect Google Drive sync or print/save invoice PDFs.
 
 The current static version does not include:
 
@@ -262,17 +241,16 @@ If a phone or desktop still shows an old layout:
 1. Close the app tab.
 2. Reopen the live URL.
 3. Wait for one automatic refresh if it happens.
-4. Confirm the invoice screen has the `Invoice type` field.
+4. Confirm the splash screen shows the current version.
 
 ## Troubleshooting
 
 ### I see both rent and utility boxes on a rent invoice
 
-Check `Invoice type`.
+Open the `Rent` tab from the top navigation.
 
 - `Rent invoice` should show only rent.
 - `Utility invoice` should show only utility charges.
-- `Rent + utility` intentionally shows both.
 
 If the type is correct but the layout is stale, close and reopen the app.
 
@@ -294,8 +272,6 @@ For local phone access, make sure:
 ### My data is missing on another device
 
 Without Google Drive sync, that is expected. Data is stored in each browser separately.
-
-Export a backup from the first device and import it on the second device.
 
 With Google Drive sync, connect Drive on the second device and use `Load from Drive`.
 

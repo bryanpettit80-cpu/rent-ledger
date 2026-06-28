@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v17" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v18" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v17" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v18" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v17</strong>
+              <strong id="splashVersion">rent-ledger-v18</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -143,7 +143,13 @@
                   <h1 id="invoiceHeading">Rent Invoice</h1>
                   <p class="panel-copy" id="workflowCopy">Create monthly rent invoices for active tenants.</p>
                 </div>
-                <span class="status-pill" id="invoiceStatus">Draft</span>
+                <div class="invoice-header-tools">
+                  <span class="status-pill" id="invoiceStatus">Draft</span>
+                  <div class="header-actions">
+                    <button class="small-button" id="newInvoice" type="button">New</button>
+                    <button class="small-button" id="markPaid" type="button">Mark paid</button>
+                  </div>
+                </div>
               </div>
 
               <form id="invoiceForm" class="stack">
@@ -157,7 +163,6 @@
                     <select id="invoiceType" name="invoiceType">
                       <option value="rent">Rent invoice</option>
                       <option value="utility">Utility invoice</option>
-                      <option value="combined">Rent + utility</option>
                     </select>
                   </label>
                   <label>
@@ -259,11 +264,8 @@
                 </div>
 
                 <div class="button-row">
-                  <button class="primary-button" id="saveInvoice" type="submit">Save invoice</button>
-                  <button class="secondary-button" id="newInvoice" type="button">New</button>
-                  <button class="secondary-button" id="markPaid" type="button">Mark paid</button>
-                  <button class="secondary-button" id="printInvoice" type="button">Print / PDF</button>
-                  <button class="secondary-button" id="saveInvoicePdfDrive" type="button">Save PDF to Drive</button>
+                  <button class="primary-button" id="saveInvoice" type="submit">Save</button>
+                  <button class="secondary-button" id="printInvoice" type="button">Print</button>
                 </div>
               </form>
             </section>
@@ -446,27 +448,6 @@
                   <strong id="metricPaid">0</strong>
                 </div>
               </div>
-              <div class="backup-tools">
-                <div>
-                  <p class="eyebrow">Backup</p>
-                  <h2>Local Safety Copies</h2>
-                  <p class="backup-copy">
-                    Recent changes are snapshotted in this browser. Export a JSON backup for a copy outside the browser.
-                  </p>
-                </div>
-                <div class="backup-status">
-                  <span id="backupCount">0 local backups</span>
-                  <strong id="backupLatest">No backup yet</strong>
-                </div>
-                <div class="button-row">
-                  <button class="secondary-button" id="exportBackupSettings" type="button">Export backup</button>
-                  <label class="secondary-button file-import-button" for="importBackup">
-                    Import backup
-                    <input id="importBackup" type="file" accept="application/json" />
-                  </label>
-                  <button class="secondary-button" id="restoreLatestBackup" type="button">Restore latest</button>
-                </div>
-              </div>
               <div class="backup-tools drive-tools">
                 <div>
                   <p class="eyebrow">Cloud backup</p>
@@ -510,6 +491,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v17" defer></script>
+    <script src="app.js?v=rent-ledger-v18" defer></script>
   </body>
 </html>

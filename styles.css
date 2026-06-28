@@ -331,6 +331,19 @@ button {
   padding-bottom: 14px;
 }
 
+.invoice-header-tools {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: var(--accent);
