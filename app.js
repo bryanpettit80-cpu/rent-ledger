@@ -188,7 +188,11 @@
 
     els.tenantSelect.addEventListener("change", () => {
       syncDraftFromForm();
-      applyTenantDefaultsToDraft(els.tenantSelect.value, { force: true, keepCurrentItems: true });
+      applyTenantDefaultsToDraft(els.tenantSelect.value, {
+        force: true,
+        keepCurrentItems: true,
+        currentUtilityCalculation: readUtilityCalculationFromForm(),
+      });
       renderInvoiceEditor();
       renderInvoicePreview();
       renderOverview();
@@ -871,7 +875,7 @@
     if (options.force || !draft.lineItems.length) {
       draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, currentItems);
       draft.utilityCalculation = options.keepCurrentItems
-        ? utilityCalculationForTenant(tenant, draft.utilityCalculation)
+        ? utilityCalculationForTenant(tenant, options.currentUtilityCalculation || draft.utilityCalculation)
         : defaultUtilityCalculation(tenant);
     }
   }
@@ -1320,15 +1324,7 @@
     draft.issueDate = els.issueDate.value;
     draft.dueDate = els.dueDate.value;
     draft.billingPeriod = els.billingPeriod.value.trim();
-    draft.utilityCalculation = {
-      method: els.utilityMethod.value || "occupancyUnits",
-      tenantUnits: toNumber(els.utilityTenantUnits.value),
-      totalUnits: toNumber(els.utilityTotalUnits.value),
-      electric: toNumber(els.utilityElectric.value),
-      waterSewer: toNumber(els.utilityWaterSewer.value),
-      gas: toNumber(els.utilityGas.value),
-      other: toNumber(els.utilityOther.value),
-    };
+    draft.utilityCalculation = readUtilityCalculationFromForm();
     draft.previousBalance = toNumber(els.previousBalance.value);
     draft.credits = toNumber(els.credits.value);
     draft.notes = els.invoiceNotes.value.trim();
@@ -1339,6 +1335,18 @@
       amount: toNumber(row.querySelector(`[data-line-amount="${index}"]`)?.value),
       generatedUtility: row.dataset.generatedUtility === "true",
     }));
+  }
+
+  function readUtilityCalculationFromForm() {
+    return {
+      method: els.utilityMethod.value || "occupancyUnits",
+      tenantUnits: toNumber(els.utilityTenantUnits.value),
+      totalUnits: toNumber(els.utilityTotalUnits.value),
+      electric: toNumber(els.utilityElectric.value),
+      waterSewer: toNumber(els.utilityWaterSewer.value),
+      gas: toNumber(els.utilityGas.value),
+      other: toNumber(els.utilityOther.value),
+    };
   }
 
   function getDraftSnapshot() {
