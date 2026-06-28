@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v18" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v19" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v18" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v19" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v18</strong>
+              <strong id="splashVersion">rent-ledger-v19</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -144,9 +144,9 @@
                   <p class="panel-copy" id="workflowCopy">Create monthly rent invoices for active tenants.</p>
                 </div>
                 <div class="invoice-header-tools">
-                  <span class="status-pill" id="invoiceStatus">Draft</span>
+                  <span class="status-pill" id="invoiceStatus">Not saved</span>
                   <div class="header-actions">
-                    <button class="small-button" id="newInvoice" type="button">New</button>
+                    <button class="small-button" id="newInvoice" type="button">Start new</button>
                     <button class="small-button" id="markPaid" type="button">Mark paid</button>
                   </div>
                 </div>
@@ -237,7 +237,10 @@
 
                 <div class="section-heading">
                   <h2>Charges</h2>
-                  <button class="small-button" id="addLineItem" type="button">Add item</button>
+                  <div class="charge-actions">
+                    <button class="small-button" id="applyRentCharge" type="button">Apply charge</button>
+                    <button class="small-button" id="addLineItem" type="button">Add item</button>
+                  </div>
                 </div>
 
                 <div class="line-items" id="lineItems" aria-live="polite"></div>
@@ -453,7 +456,7 @@
                   <p class="eyebrow">Cloud backup</p>
                   <h2>Google Drive Sync</h2>
                   <p class="backup-copy">
-                    Saves the current app state as rent-ledger-state.json in a Rent Ledger folder.
+                    Saves app data as rent-ledger-state.json and invoice PDFs in a Rent Ledger folder.
                   </p>
                 </div>
                 <label>
@@ -477,11 +480,14 @@
                   <strong id="driveStatus">Not connected</strong>
                 </div>
                 <div class="button-row">
-                  <button class="secondary-button" id="saveDriveSettings" type="button">Save Drive settings</button>
-                  <button class="secondary-button" id="connectDrive" type="button">Connect Drive</button>
-                  <button class="secondary-button" id="loadDriveState" type="button">Load from Drive</button>
-                  <button class="secondary-button" id="saveDriveState" type="button">Save now</button>
+                  <button class="secondary-button" id="saveDriveSettings" type="button">Save connection settings</button>
+                  <button class="secondary-button" id="connectDrive" type="button">Authorize Drive</button>
+                  <button class="secondary-button" id="loadDriveState" type="button">Load cloud data</button>
+                  <button class="secondary-button" id="saveDriveState" type="button">Sync now</button>
                 </div>
+                <p class="field-help">
+                  Authorize Drive grants temporary Google access. Sync now uploads this browser's data. Load cloud data replaces this browser's data with the Drive copy.
+                </p>
               </div>
             </section>
           </div>
@@ -491,6 +497,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v18" defer></script>
+    <script src="app.js?v=rent-ledger-v19" defer></script>
   </body>
 </html>

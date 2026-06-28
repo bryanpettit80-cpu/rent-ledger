@@ -67,6 +67,10 @@ button {
   display: none;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .splash-panel {
   display: grid;
   justify-items: start;
@@ -462,6 +466,13 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.charge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .section-heading.compact {

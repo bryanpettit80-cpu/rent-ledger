@@ -79,6 +79,7 @@ Rent invoices:
 - Use invoice numbers like `RNT-2026-0001`.
 - Include the tenant's monthly rent line.
 - Hide the utility calculator.
+- Use `Apply charge` to refresh the rent line from the selected tenant's current monthly rent.
 - Are the preferred way to bill predictable monthly rent.
 
 ### Utility Invoice
@@ -92,6 +93,17 @@ Utility invoices:
 - Show the Utility Allocation section.
 - Add the calculated utility reimbursement as a generated charge line.
 - Show the allocation math on the invoice preview.
+
+### Invoice States
+
+The invoice header uses these states:
+
+- `Not saved`: the current invoice is a working draft in the browser and has not been saved as an invoice record.
+- `Saved`: the invoice is saved in the browser. If Drive is authorized, `Save` also uploads app data and the invoice PDF to Drive.
+- `Unsaved changes`: a saved invoice was edited after its last save.
+- `Paid`: the saved invoice has been marked paid.
+
+Use `Start new` only when you want to discard the current working form and begin a fresh invoice for the current workflow.
 
 ## Utility Calculations
 
@@ -172,10 +184,11 @@ Do not paste a Google account email, project ID, API key, or client secret. Thos
 In `Settings`:
 
 1. Leave the prefilled Google OAuth client ID in place unless you created a replacement.
-2. Save Drive settings.
-3. Connect Drive.
-4. Use `Load from Drive` or `Save now`.
-5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
+2. Use `Save connection settings` if you change the OAuth client ID or auto-sync setting.
+3. Use `Authorize Drive` to grant Google Drive access.
+4. Use `Load cloud data` to replace this browser's data with the Drive copy.
+5. Use `Sync now` to upload this browser's current data to Drive.
+6. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
 
 When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then can sync the JSON state to Drive.
 
@@ -187,7 +200,7 @@ Rent Ledger/Invoices/
 
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 
-When you click a Drive action such as `Save`, `Save now`, `Load from Drive`, or `Connect Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
+When you click a Drive action such as `Save`, `Sync now`, `Load cloud data`, or `Authorize Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
 
 Important:
 
@@ -273,7 +286,7 @@ For local phone access, make sure:
 
 Without Google Drive sync, that is expected. Data is stored in each browser separately.
 
-With Google Drive sync, connect Drive on the second device and use `Load from Drive`.
+With Google Drive sync, authorize Drive on the second device and use `Load cloud data`.
 
 ## Development Notes
 
