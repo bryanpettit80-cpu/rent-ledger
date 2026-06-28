@@ -322,6 +322,9 @@ try {
       },
     };
   });
+  await page.locator("details.advanced-settings").evaluate((details) => {
+    details.open = true;
+  });
   await page.fill("#googleClientId", testClientId);
   await page.check("#driveAutoSync");
   await page.click("#connectDrive");
