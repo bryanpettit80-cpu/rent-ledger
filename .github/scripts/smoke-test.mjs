@@ -163,6 +163,10 @@ try {
   assert(appliedRent.total === "$850.00", `Expected $850.00 total, got ${appliedRent.total}.`);
 
   await page.click('[data-view="utility"]');
+  await page.waitForFunction(
+    () => window.location.hash === "#utility" && document.getElementById("invoiceType")?.value === "utility"
+  );
+  await page.waitForTimeout(100);
   const utilityState = await page.evaluate(() => {
     const utility = document.getElementById("utilityCalculator");
     return {
