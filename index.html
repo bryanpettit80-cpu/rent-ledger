@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v11" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v12" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v11" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v12" />
   </head>
   <body>
     <div id="app" class="app">
@@ -376,8 +376,16 @@
                 </div>
                 <label>
                   Google OAuth client ID
-                  <input id="googleClientId" type="text" autocomplete="off" />
+                  <input
+                    id="googleClientId"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="1234567890-abc.apps.googleusercontent.com"
+                  />
                 </label>
+                <p class="field-help">
+                  Paste the full Web application OAuth client ID. Do not use a project ID, API key, email address, or client secret.
+                </p>
                 <label class="checkbox-row">
                   <input id="driveAutoSync" type="checkbox" />
                   <span>Auto-sync changes while connected</span>
@@ -401,6 +409,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v11" defer></script>
+    <script src="app.js?v=rent-ledger-v12" defer></script>
   </body>
 </html>

@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v11";
+  const APP_VERSION = "rent-ledger-v12";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -917,7 +917,8 @@
 
   function saveDriveSettings(showMessage) {
     const previousClientId = appSettings.googleClientId;
-    const nextClientId = els.googleClientId.value.trim();
+    const nextClientId = cleanGoogleClientId(els.googleClientId.value);
+    els.googleClientId.value = nextClientId;
     appSettings = {
       ...appSettings,
       googleClientId: nextClientId,
@@ -940,14 +941,17 @@
   function renderDriveStatus(message) {
     if (!els.driveStatus) return;
     const hasClientId = Boolean(appSettings.googleClientId);
+    const hasValidClientId = isValidGoogleClientId(appSettings.googleClientId);
     const connected = Boolean(driveAccessToken);
-    els.connectDrive.disabled = !hasClientId;
+    els.connectDrive.disabled = !hasValidClientId;
     els.loadDriveState.disabled = !connected;
     els.saveDriveState.disabled = !connected;
     if (message) {
       els.driveStatus.textContent = message;
     } else if (!hasClientId) {
       els.driveStatus.textContent = "Add a Google OAuth client ID.";
+    } else if (!hasValidClientId) {
+      els.driveStatus.textContent = "Use the full Web application OAuth client ID.";
     } else if (connected) {
       els.driveStatus.textContent = appSettings.driveAutoSync ? "Connected. Auto-sync on." : "Connected. Auto-sync off.";
     } else {
@@ -1225,6 +1229,11 @@
       showToast("Add a Google OAuth client ID first.");
       return;
     }
+    if (!isValidGoogleClientId(appSettings.googleClientId)) {
+      renderDriveStatus("Use the full Web application OAuth client ID.");
+      showToast("Use the full OAuth client ID.");
+      return;
+    }
 
     try {
       renderDriveStatus("Connecting to Google Drive...");
@@ -1299,6 +1308,11 @@
     if (!appSettings.googleClientId) {
       renderDriveStatus("Add a Google OAuth client ID.");
       showToast("Add a Google OAuth client ID first.");
+      return;
+    }
+    if (!isValidGoogleClientId(appSettings.googleClientId)) {
+      renderDriveStatus("Use the full Web application OAuth client ID.");
+      showToast("Use the full OAuth client ID.");
       return;
     }
 
@@ -1497,6 +1511,14 @@
 
   function driveQueryLiteral(value) {
     return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  }
+
+  function cleanGoogleClientId(value) {
+    return String(value || "").trim().replace(/^["']|["']$/g, "");
+  }
+
+  function isValidGoogleClientId(value) {
+    return /^\d+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/.test(cleanGoogleClientId(value));
   }
 
   async function requestDriveAccessToken(prompt = "") {

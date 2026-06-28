@@ -169,6 +169,14 @@ The OAuth client must allow this JavaScript origin:
 https://bryanpettit80-cpu.github.io
 ```
 
+The client ID must look like:
+
+```text
+1234567890-abc123.apps.googleusercontent.com
+```
+
+Do not paste a Google account email, project ID, API key, or client secret. Those values cause Google to reject the sign-in with `Error 401: invalid_client`.
+
 In `Settings`:
 
 1. Enter the Google OAuth client ID.
