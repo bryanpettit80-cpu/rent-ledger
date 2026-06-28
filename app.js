@@ -187,11 +187,13 @@
     els.enterApp.addEventListener("click", dismissSplash);
 
     els.tenantSelect.addEventListener("change", () => {
+      const currentUtilityCalculation = readUtilityCalculationFromForm(draft.utilityCalculation);
       syncDraftFromForm();
+      draft.utilityCalculation = currentUtilityCalculation;
       applyTenantDefaultsToDraft(els.tenantSelect.value, {
         force: true,
         keepCurrentItems: true,
-        currentUtilityCalculation: readUtilityCalculationFromForm(),
+        currentUtilityCalculation,
       });
       renderInvoiceEditor();
       renderInvoicePreview();
@@ -1337,15 +1339,20 @@
     }));
   }
 
-  function readUtilityCalculationFromForm() {
+  function readUtilityCalculationFromForm(fallbackCalculation = null) {
+    const fallback = fallbackCalculation ? normalizeUtilityCalculation(fallbackCalculation) : null;
+    const readUtilityNumber = (input, fallbackValue) => {
+      if (input.value === "" && fallback) return toNumber(fallbackValue);
+      return toNumber(input.value);
+    };
     return {
       method: els.utilityMethod.value || "occupancyUnits",
-      tenantUnits: toNumber(els.utilityTenantUnits.value),
-      totalUnits: toNumber(els.utilityTotalUnits.value),
-      electric: toNumber(els.utilityElectric.value),
-      waterSewer: toNumber(els.utilityWaterSewer.value),
-      gas: toNumber(els.utilityGas.value),
-      other: toNumber(els.utilityOther.value),
+      tenantUnits: readUtilityNumber(els.utilityTenantUnits, fallback?.tenantUnits),
+      totalUnits: readUtilityNumber(els.utilityTotalUnits, fallback?.totalUnits),
+      electric: readUtilityNumber(els.utilityElectric, fallback?.electric),
+      waterSewer: readUtilityNumber(els.utilityWaterSewer, fallback?.waterSewer),
+      gas: readUtilityNumber(els.utilityGas, fallback?.gas),
+      other: readUtilityNumber(els.utilityOther, fallback?.other),
     };
   }
 

@@ -8,7 +8,11 @@ if (!appVersion) {
   throw new Error("Unable to read APP_VERSION from app.js.");
 }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+    ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+    : {}
+);
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   isMobile: true,
