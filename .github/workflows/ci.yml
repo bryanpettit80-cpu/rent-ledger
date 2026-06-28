@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Static and browser checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check JavaScript syntax
+        run: node --check app.js
+
+      - name: Validate static app files
+        run: node .github/scripts/validate-static.mjs
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 > server.log 2>&1 &
+          echo $! > server.pid
+          sleep 2
+
+      - name: Run browser smoke test
+        env:
+          RENT_LEDGER_URL: http://127.0.0.1:4173/
+        run: node .github/scripts/smoke-test.mjs
+
+      - name: Stop static server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" || true
+          fi
+          if [ -f server.log ]; then
+            cat server.log
+          fi

@@ -1,0 +1,66 @@
+import { readFileSync } from "node:fs";
+
+const files = {
+  app: readFileSync("app.js", "utf8"),
+  html: readFileSync("index.html", "utf8"),
+  serviceWorker: readFileSync("sw.js", "utf8"),
+  readme: readFileSync("README.md", "utf8"),
+};
+
+const failures = [];
+
+function assert(condition, message) {
+  if (!condition) failures.push(message);
+}
+
+const appVersionMatch = files.app.match(/const APP_VERSION = "([^"]+)"/);
+assert(appVersionMatch, "app.js must define APP_VERSION.");
+
+const appVersion = appVersionMatch?.[1] || "";
+assert(/^rent-ledger-v\d+$/.test(appVersion), `APP_VERSION must look like rent-ledger-vNN, got ${appVersion || "missing"}.`);
+
+const versionedFiles = {
+  "app.js": files.app,
+  "index.html": files.html,
+  "sw.js": files.serviceWorker,
+};
+
+for (const [name, content] of Object.entries(versionedFiles)) {
+  const versions = [...content.matchAll(/rent-ledger-v\d+/g)].map((match) => match[0]);
+  const staleVersions = [...new Set(versions.filter((version) => version !== appVersion))];
+  assert(!staleVersions.length, `${name} has stale app version(s): ${staleVersions.join(", ")}.`);
+}
+
+assert(files.html.includes(`<strong id="splashVersion">${appVersion}</strong>`), "index.html splash version must match APP_VERSION.");
+assert(files.html.includes(`app.js?v=${appVersion}`), "index.html script URL must use APP_VERSION.");
+assert(files.html.includes(`styles.css?v=${appVersion}`), "index.html stylesheet URL must use APP_VERSION.");
+assert(files.html.includes(`manifest.webmanifest?v=${appVersion}`), "index.html manifest URL must use APP_VERSION.");
+
+assert(files.serviceWorker.includes(`const CACHE_NAME = "${appVersion}"`), "sw.js CACHE_NAME must match APP_VERSION.");
+assert(files.serviceWorker.includes(`./app.js?v=${appVersion}`), "sw.js must cache the versioned app.js URL.");
+assert(files.serviceWorker.includes(`./styles.css?v=${appVersion}`), "sw.js must cache the versioned styles.css URL.");
+assert(files.serviceWorker.includes(`./manifest.webmanifest?v=${appVersion}`), "sw.js must cache the versioned manifest URL.");
+
+assert(files.html.includes('id="applyRentCharge"'), "Rent workflow must include the Apply charge button.");
+assert(files.html.includes("Authorize Drive"), "Settings must include Authorize Drive.");
+assert(files.html.includes("Load cloud data"), "Settings must include Load cloud data.");
+assert(files.html.includes("Sync now"), "Settings must include Sync now.");
+assert(!files.html.includes("Save connection settings"), "Settings must not include the removed Save connection settings button.");
+
+assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
+assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
+assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
+assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
+
+assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
+assert(files.readme.includes("Invoice States"), "README must document invoice states.");
+
+if (failures.length) {
+  console.error("Static validation failed:");
+  for (const failure of failures) {
+    console.error(`- ${failure}`);
+  }
+  process.exit(1);
+}
+
+console.log(`Static validation passed for ${appVersion}.`);

@@ -1,0 +1,170 @@
+import { readFileSync } from "node:fs";
+import { chromium } from "playwright";
+
+const baseUrl = process.env.RENT_LEDGER_URL || "http://127.0.0.1:4173/";
+const appVersion = readFileSync("app.js", "utf8").match(/const APP_VERSION = "([^"]+)"/)?.[1];
+
+if (!appVersion) {
+  throw new Error("Unable to read APP_VERSION from app.js.");
+}
+
+const browser = await chromium.launch();
+const context = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  deviceScaleFactor: 3,
+});
+
+const failures = [];
+
+function assert(condition, message) {
+  if (!condition) failures.push(message);
+}
+
+try {
+  const page = await context.newPage();
+  await page.goto(baseUrl, { waitUntil: "networkidle" });
+
+  await page.evaluate((version) => {
+    const state = {
+      landlord: {
+        name: "Test Landlord",
+        address: "1 Test Way",
+        email: "",
+        phone: "",
+        paymentInstructions: "Pay test.",
+      },
+      tenants: [
+        {
+          id: "andrew",
+          name: "Andrew Buckwalter",
+          unit: "Unit A",
+          address: "",
+          email: "",
+          phone: "",
+          rent: 850,
+          utilityUnits: 1,
+          active: true,
+          excludeUtilities: false,
+          memo: "",
+        },
+      ],
+      invoices: [],
+    };
+    localStorage.clear();
+    sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+  }, appVersion);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.click('[data-view="rent"]');
+
+  const rentState = await page.evaluate(() => {
+    const utility = document.getElementById("utilityCalculator");
+    return {
+      splashVersion: document.getElementById("splashVersion")?.textContent?.trim(),
+      invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
+      saveState: document.getElementById("saveState")?.textContent?.trim(),
+      startNewText: document.getElementById("newInvoice")?.textContent?.trim(),
+      markPaidDisabled: document.getElementById("markPaid")?.disabled,
+      utilityHidden: utility?.hidden,
+      utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
+      applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
+      invoiceButtons: [...document.querySelectorAll("#invoiceForm > .button-row button")].map((button) =>
+        button.textContent.trim()
+      ),
+      lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+      lineAmounts: [...document.querySelectorAll("[data-line-amount]")].map((input) => input.value),
+      scrollWidth: document.documentElement.scrollWidth,
+      width: window.innerWidth,
+    };
+  });
+
+  assert(rentState.splashVersion === appVersion, `Expected splash version ${appVersion}, got ${rentState.splashVersion}.`);
+  assert(rentState.invoiceStatus === "Not saved", `Expected Not saved status, got ${rentState.invoiceStatus}.`);
+  assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
+  assert(rentState.startNewText === "Start new", `Expected Start new button, got ${rentState.startNewText}.`);
+  assert(rentState.markPaidDisabled, "Mark paid should be disabled before save.");
+  assert(rentState.utilityHidden && rentState.utilityDisplay === "none", "Rent tab must hide the utility calculator.");
+  assert(!rentState.applyRentHidden && rentState.applyRentDisplay !== "none", "Rent Apply charge button should be visible.");
+  assert(rentState.invoiceButtons.join("|") === "Save|Print", `Expected Save|Print, got ${rentState.invoiceButtons.join("|")}.`);
+  assert(rentState.lineTypes.join("|") === "Rent", `Expected one Rent line, got ${rentState.lineTypes.join("|")}.`);
+  assert(rentState.lineAmounts[0] === "850", `Expected rent amount 850, got ${rentState.lineAmounts[0]}.`);
+  assert(rentState.scrollWidth <= rentState.width + 1, `Mobile overflow: ${rentState.scrollWidth} > ${rentState.width}.`);
+
+  await page.click('[data-remove-line="0"]');
+  const emptyText = await page.locator("#lineItems").textContent();
+  assert(emptyText.includes("Apply the rent charge"), `Unexpected empty rent message: ${emptyText}.`);
+
+  await page.click("#applyRentCharge");
+  const appliedRent = await page.evaluate(() => ({
+    lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+    lineAmounts: [...document.querySelectorAll("[data-line-amount]")].map((input) => input.value),
+    total: document.getElementById("totalDue")?.textContent?.trim(),
+  }));
+  assert(appliedRent.lineTypes.join("|") === "Rent", "Apply charge should restore the Rent line.");
+  assert(appliedRent.lineAmounts[0] === "850", `Apply charge restored wrong rent amount: ${appliedRent.lineAmounts[0]}.`);
+  assert(appliedRent.total === "$850.00", `Expected $850.00 total, got ${appliedRent.total}.`);
+
+  await page.click('[data-view="utility"]');
+  const utilityState = await page.evaluate(() => {
+    const utility = document.getElementById("utilityCalculator");
+    return {
+      invoiceType: document.getElementById("invoiceType")?.value,
+      utilityHidden: utility?.hidden,
+      utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
+      applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
+    };
+  });
+  assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
+  assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
+  assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
+
+  await page.click('[data-view="settings"]');
+  const settingsState = await page.evaluate(() => ({
+    buttons: [...document.querySelectorAll(".drive-tools .button-row button")].map((button) => button.textContent.trim()),
+    driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
+    help: document.querySelector(".drive-tools .field-help:last-child")?.textContent?.trim(),
+    hasSaveConnection: document.body.textContent.includes("Save connection settings"),
+  }));
+  assert(
+    settingsState.buttons.join("|") === "Authorize Drive|Load cloud data|Sync now",
+    `Unexpected Drive buttons: ${settingsState.buttons.join("|")}.`
+  );
+  assert(!settingsState.hasSaveConnection, "Removed Save connection settings text should not be present.");
+  assert(settingsState.driveStatus === "Not connected: click Authorize Drive.", `Unexpected Drive status: ${settingsState.driveStatus}.`);
+  assert(settingsState.help.includes("These actions save the connection fields first"), "Drive help must explain settings auto-save.");
+
+  await page.fill("#googleClientId", "bad-client-id");
+  await page.check("#driveAutoSync");
+  await page.click("#connectDrive");
+  const storedSettings = await page.evaluate(() => {
+    const settings = JSON.parse(localStorage.getItem("rent-ledger:settings:v1"));
+    return {
+      googleClientId: settings.googleClientId,
+      driveAutoSync: settings.driveAutoSync,
+      driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
+    };
+  });
+  assert(storedSettings.googleClientId === "bad-client-id", "Drive action should save edited client ID first.");
+  assert(storedSettings.driveAutoSync === true, "Drive action should save edited auto-sync setting first.");
+  assert(
+    storedSettings.driveStatus === "Setup needed: client ID format is invalid.",
+    `Unexpected invalid client status: ${storedSettings.driveStatus}.`
+  );
+} finally {
+  await context.close();
+  await browser.close();
+}
+
+if (failures.length) {
+  console.error("Smoke test failed:");
+  for (const failure of failures) {
+    console.error(`- ${failure}`);
+  }
+  process.exit(1);
+}
+
+console.log(`Smoke test passed for ${appVersion}.`);
