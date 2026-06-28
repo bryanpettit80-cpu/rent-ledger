@@ -42,7 +42,7 @@ assert(files.serviceWorker.includes(`./styles.css?v=${appVersion}`), "sw.js must
 assert(files.serviceWorker.includes(`./manifest.webmanifest?v=${appVersion}`), "sw.js must cache the versioned manifest URL.");
 
 assert(files.html.includes('id="applyRentCharge"'), "Rent workflow must include the Apply charge button.");
-assert(files.html.includes('placeholder="07 - July 2026"'), "Billing period placeholder must include the two-digit month number.");
+assert(files.html.includes('placeholder="July 2026"'), "Billing period placeholder should use month and year.");
 assert(files.html.includes("Authorize Drive"), "Settings must include Authorize Drive.");
 assert(files.html.includes("Load cloud data"), "Settings must include Load cloud data.");
 assert(files.html.includes("Sync now"), "Settings must include Sync now.");
@@ -50,14 +50,17 @@ assert(!files.html.includes("Save connection settings"), "Settings must not incl
 
 assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
 assert(files.app.includes("function utilityCalculationForTenant"), "Utility billing should preserve shared bill totals when switching tenants.");
-assert(files.app.includes("return `${monthNumber} - ${monthName}`;"), "Billing period labels must include the two-digit month number.");
+assert(files.app.includes("function invoiceNumberPeriodDate"), "Generated invoice numbers must use the invoice billing month.");
+assert(files.app.includes("return `${prefix}-${year}-${month}-${String(next).padStart(4, \"0\")}`;"), "Generated invoice numbers must include the two-digit billing month.");
 assert(files.app.includes(".replace(/^\\d{1,2}\\s*[-/]\\s*/, \"\")"), "Cycle matching must handle old labels without month numbers.");
+assert(files.app.includes("/^(INV|RNT|UTL)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Generated invoice detection must accept old and month-coded invoice numbers.");
 assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
-assert(files.readme.includes("07 - July 2026"), "README must document numeric billing month labels.");
+assert(files.readme.includes("RNT-2026-07-"), "README must document month-coded rent invoice numbers.");
+assert(files.readme.includes("UTL-2026-06-"), "README must document month-coded utility invoice numbers.");
 assert(files.readme.includes("Invoice States"), "README must document invoice states.");
 
 if (failures.length) {

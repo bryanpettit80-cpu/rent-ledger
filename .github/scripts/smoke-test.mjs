@@ -26,12 +26,10 @@ function assert(condition, message) {
 }
 
 function monthLabel(date) {
-  const monthNumber = String(date.getMonth() + 1).padStart(2, "0");
-  const monthName = new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("en-US", {
     month: "long",
     year: "numeric",
   }).format(date);
-  return `${monthNumber} - ${monthName}`;
 }
 
 function currentRentCycleDate(referenceDate = new Date()) {
@@ -45,11 +43,19 @@ function previousMonthDate(date) {
   return new Date(date.getFullYear(), date.getMonth() - 1, 1);
 }
 
+function invoiceNumberPattern(prefix, date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return new RegExp(`^${prefix}-${year}-${month}-\\d{4}$`);
+}
+
 try {
   const page = await context.newPage();
   const rentCycleDate = currentRentCycleDate();
   const expectedRentPeriod = monthLabel(rentCycleDate);
   const expectedUtilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
+  const expectedRentInvoiceNumber = invoiceNumberPattern("RNT", rentCycleDate);
+  const expectedUtilityInvoiceNumber = invoiceNumberPattern("UTL", previousMonthDate(rentCycleDate));
   await page.route("**/sw.js", (route) => route.abort());
   await page.goto(baseUrl, { waitUntil: "networkidle" });
 
@@ -120,6 +126,7 @@ try {
       saveState: document.getElementById("saveState")?.textContent?.trim(),
       startNewText: document.getElementById("newInvoice")?.textContent?.trim(),
       markPaidDisabled: document.getElementById("markPaid")?.disabled,
+      invoiceNumber: document.getElementById("invoiceNumber")?.value,
       billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
@@ -140,6 +147,10 @@ try {
   assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
   assert(rentState.startNewText === "Start new", `Expected Start new button, got ${rentState.startNewText}.`);
   assert(rentState.markPaidDisabled, "Mark paid should be disabled before save.");
+  assert(
+    expectedRentInvoiceNumber.test(rentState.invoiceNumber || ""),
+    `Expected rent invoice number to match ${expectedRentInvoiceNumber}, got ${rentState.invoiceNumber}.`
+  );
   assert(rentState.billingPeriod === expectedRentPeriod, `Expected rent period ${expectedRentPeriod}, got ${rentState.billingPeriod}.`);
   assert(rentState.utilityHidden && rentState.utilityDisplay === "none", "Rent tab must hide the utility calculator.");
   assert(!rentState.applyRentHidden && rentState.applyRentDisplay !== "none", "Rent Apply charge button should be visible.");
@@ -171,6 +182,7 @@ try {
     const utility = document.getElementById("utilityCalculator");
     return {
       invoiceType: document.getElementById("invoiceType")?.value,
+      invoiceNumber: document.getElementById("invoiceNumber")?.value,
       billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
@@ -179,6 +191,10 @@ try {
     };
   });
   assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
+  assert(
+    expectedUtilityInvoiceNumber.test(utilityState.invoiceNumber || ""),
+    `Expected utility invoice number to match ${expectedUtilityInvoiceNumber}, got ${utilityState.invoiceNumber}.`
+  );
   assert(
     utilityState.billingPeriod === expectedUtilityPeriod,
     `Expected utility period ${expectedUtilityPeriod}, got ${utilityState.billingPeriod}.`

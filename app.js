@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v21";
+  const APP_VERSION = "rent-ledger-v22";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -1380,7 +1380,7 @@
     const issueDate = toDateInput(new Date());
     const rentCycleDate = currentRentCycleDate();
     const dueDate = toDateInput(firstDayOfMonth(rentCycleDate));
-    const invoiceNumber = nextInvoiceNumber(normalizedType);
+    const invoiceNumber = nextInvoiceNumber(normalizedType, rentCycleDate);
     return {
       id: "",
       tenantId,
@@ -2559,8 +2559,10 @@
     worker.postMessage({ type: "SKIP_WAITING" });
   }
 
-  function nextInvoiceNumber(invoiceType = "rent") {
-    const year = new Date().getFullYear();
+  function nextInvoiceNumber(invoiceType = "rent", rentCycleDate = currentRentCycleDate()) {
+    const invoicePeriodDate = invoiceNumberPeriodDate(invoiceType, rentCycleDate);
+    const year = invoicePeriodDate.getFullYear();
+    const month = String(invoicePeriodDate.getMonth() + 1).padStart(2, "0");
     const prefix = invoiceNumberPrefix(invoiceType);
     const existingNumbers = state.invoices
       .map((invoice) => invoice.invoiceNumber || "")
@@ -2568,7 +2570,11 @@
       .map((number) => Number(number.split("-").pop()))
       .filter(Number.isFinite);
     const next = Math.max(0, ...existingNumbers) + 1;
-    return `${prefix}-${year}-${String(next).padStart(4, "0")}`;
+    return `${prefix}-${year}-${month}-${String(next).padStart(4, "0")}`;
+  }
+
+  function invoiceNumberPeriodDate(invoiceType, rentCycleDate = currentRentCycleDate()) {
+    return normalizeInvoiceType(invoiceType) === "utility" ? previousMonthDate(rentCycleDate) : rentCycleDate;
   }
 
   function invoiceNumberPrefix(invoiceType) {
@@ -2579,7 +2585,7 @@
   }
 
   function isGeneratedInvoiceNumber(value) {
-    return /^(INV|RNT|UTL)-\d{4}-\d{4}$/.test(value || "");
+    return /^(INV|RNT|UTL)-\d{4}-(\d{2}-)?\d{4}$/.test(value || "");
   }
 
   function docFact(label, value) {
@@ -2646,12 +2652,10 @@
   }
 
   function monthLabel(date) {
-    const monthNumber = String(date.getMonth() + 1).padStart(2, "0");
-    const monthName = new Intl.DateTimeFormat("en-US", {
+    return new Intl.DateTimeFormat("en-US", {
       month: "long",
       year: "numeric",
     }).format(date);
-    return `${monthNumber} - ${monthName}`;
   }
 
   function currentRentCycleDate(referenceDate = new Date()) {
