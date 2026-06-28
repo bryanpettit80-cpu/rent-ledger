@@ -2,11 +2,12 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v10";
+  const APP_VERSION = "rent-ledger-v11";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
   const DRIVE_FOLDER_NAME = "Rent Ledger";
+  const DRIVE_INVOICE_FOLDER_NAME = "Invoices";
   const DRIVE_STATE_FILE_NAME = "rent-ledger-state.json";
   const DRIVE_SYNC_DEBOUNCE_MS = 1200;
 
@@ -102,6 +103,7 @@
       "newInvoice",
       "markPaid",
       "printInvoice",
+      "saveInvoicePdfDrive",
       "clearPaid",
       "tenantList",
       "addTenant",
@@ -279,6 +281,7 @@
     els.newInvoice.addEventListener("click", startNewInvoice);
     els.markPaid.addEventListener("click", markInvoicePaid);
     els.printInvoice.addEventListener("click", () => window.print());
+    els.saveInvoicePdfDrive.addEventListener("click", saveInvoicePdfToDrive);
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
     els.exportBackup.addEventListener("click", exportBackup);
@@ -689,12 +692,19 @@
 
   function saveInvoice(event) {
     event.preventDefault();
+    const invoice = persistCurrentInvoice("Saved invoice");
+    if (!invoice) return;
+    renderAll();
+    showToast("Invoice saved.");
+  }
+
+  function persistCurrentInvoice(reason) {
     syncDraftFromForm();
 
     if (!draft.tenantId) {
       showToast("Add a tenant before saving an invoice.");
       setView("tenants");
-      return;
+      return null;
     }
 
     const invoice = getDraftSnapshot();
@@ -710,9 +720,8 @@
 
     selectedInvoiceId = invoice.id;
     draft = clone(invoice);
-    saveState("Saved invoice");
-    renderAll();
-    showToast("Invoice saved.");
+    saveState(reason);
+    return invoice;
   }
 
   function startNewInvoice(invoiceType = draft?.invoiceType || "rent") {
@@ -918,6 +927,7 @@
       driveAccessToken = "";
       driveTokenClient = null;
       appSettings.driveFolderId = "";
+      appSettings.driveInvoiceFolderId = "";
       appSettings.driveStateFileId = "";
     }
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
@@ -1173,6 +1183,7 @@
         googleClientId: String(parsed.googleClientId || "").trim(),
         driveAutoSync: Boolean(parsed.driveAutoSync),
         driveFolderId: String(parsed.driveFolderId || "").trim(),
+        driveInvoiceFolderId: String(parsed.driveInvoiceFolderId || "").trim(),
         driveStateFileId: String(parsed.driveStateFileId || "").trim(),
       };
     } catch (error) {
@@ -1181,6 +1192,7 @@
         googleClientId: "",
         driveAutoSync: false,
         driveFolderId: "",
+        driveInvoiceFolderId: "",
         driveStateFileId: "",
       };
     }
@@ -1278,6 +1290,36 @@
     }
   }
 
+  async function saveInvoicePdfToDrive() {
+    saveDriveSettings(false);
+    const invoice = persistCurrentInvoice("Saved invoice");
+    if (!invoice) return;
+    renderAll();
+
+    if (!appSettings.googleClientId) {
+      renderDriveStatus("Add a Google OAuth client ID.");
+      showToast("Add a Google OAuth client ID first.");
+      return;
+    }
+
+    try {
+      if (!driveAccessToken) {
+        renderDriveStatus("Connecting to Google Drive...");
+        await requestDriveAccessToken("consent");
+      }
+      renderDriveStatus("Saving invoice PDF to Drive...");
+      await uploadDriveState();
+      const pdfBlob = createInvoicePdfBlob(invoice);
+      const file = await uploadInvoicePdf(invoice, pdfBlob);
+      renderDriveStatus(`Saved ${file.name || "invoice PDF"} to Drive.`);
+      showToast("Invoice PDF saved to Drive.");
+    } catch (error) {
+      console.error(error);
+      renderDriveStatus("Invoice PDF save failed. Local invoice kept.");
+      showToast("Invoice PDF save failed.");
+    }
+  }
+
   async function loadStateFromDrive() {
     if (!driveAccessToken) {
       renderDriveStatus("Connect Drive before loading.");
@@ -1357,6 +1399,40 @@
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
   }
 
+  async function uploadInvoicePdf(invoice, pdfBlob) {
+    const folderId = await ensureDriveInvoiceFolder();
+    const tenant = getTenant(invoice.tenantId);
+    const fileName = invoicePdfFileName(invoice, tenant);
+    const existing = await findDriveFile(fileName, "application/pdf", folderId);
+
+    if (existing?.id) {
+      const updated = await driveApi(
+        `/upload/drive/v3/files/${encodeURIComponent(existing.id)}?uploadType=media&fields=id,name,modifiedTime`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/pdf" },
+          body: pdfBlob,
+        }
+      );
+      return updated;
+    }
+
+    const upload = multipartDriveBody(
+      {
+        name: fileName,
+        mimeType: "application/pdf",
+        parents: [folderId],
+      },
+      pdfBlob,
+      "application/pdf"
+    );
+    return driveApi("/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime", {
+      method: "POST",
+      headers: { "Content-Type": upload.contentType },
+      body: upload.body,
+    });
+  }
+
   async function ensureDriveFolder() {
     if (appSettings.driveFolderId) return appSettings.driveFolderId;
 
@@ -1378,6 +1454,31 @@
     appSettings.driveFolderId = created.id || "";
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
     return appSettings.driveFolderId;
+  }
+
+  async function ensureDriveInvoiceFolder() {
+    if (appSettings.driveInvoiceFolderId) return appSettings.driveInvoiceFolderId;
+
+    const rootId = await ensureDriveFolder();
+    const existing = await findDriveFile(DRIVE_INVOICE_FOLDER_NAME, "application/vnd.google-apps.folder", rootId);
+    if (existing?.id) {
+      appSettings.driveInvoiceFolderId = existing.id;
+      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+      return existing.id;
+    }
+
+    const created = await driveApi("/drive/v3/files?fields=id,name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: DRIVE_INVOICE_FOLDER_NAME,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [rootId],
+      }),
+    });
+    appSettings.driveInvoiceFolderId = created.id || "";
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    return appSettings.driveInvoiceFolderId;
   }
 
   async function findDriveFile(name, mimeType, parentId = "") {
@@ -1464,23 +1565,265 @@
     return response.text();
   }
 
-  function multipartDriveBody(metadata, media) {
+  function multipartDriveBody(metadata, media, mediaType = "application/json") {
     const boundary = `rent-ledger-${Date.now()}`;
-    return {
-      contentType: `multipart/related; boundary=${boundary}`,
-      body: [
-        `--${boundary}`,
-        "Content-Type: application/json; charset=UTF-8",
-        "",
+    const contentType = `multipart/related; boundary=${boundary}`;
+    const body = new Blob(
+      [
+        `--${boundary}\r\n`,
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n",
         JSON.stringify(metadata),
-        `--${boundary}`,
-        "Content-Type: application/json",
-        "",
-        media,
-        `--${boundary}--`,
-        "",
-      ].join("\r\n"),
+        `\r\n--${boundary}\r\n`,
+        `Content-Type: ${mediaType}\r\n\r\n`,
+        media instanceof Blob ? media : String(media),
+        `\r\n--${boundary}--\r\n`,
+      ],
+      { type: contentType }
+    );
+    return {
+      contentType,
+      body,
     };
+  }
+
+  function createInvoicePdfBlob(invoice) {
+    const tenant = getTenant(invoice.tenantId) || {};
+    const landlord = state.landlord;
+    const invoiceType = normalizeInvoiceType(invoice.invoiceType);
+    const utilityDetails = utilityCalculationDetails(invoice.utilityCalculation);
+    const subtotal = sumLineItems(invoice.lineItems);
+    const totalDue = calculateTotal(invoice);
+    const commands = [];
+
+    pdfText(commands, 36, 748, landlord.name || "Landlord", 14, "F2");
+    let headerY = 730;
+    headerY = pdfWrappedText(commands, landlord.address || "", 36, headerY, 240, 9, "F1", 12, 3);
+    const contact = [landlord.email, formatPhoneNumber(landlord.phone)].filter(Boolean).join(" | ");
+    if (contact) pdfText(commands, 36, headerY - 2, contact, 9, "F1", [0.31, 0.36, 0.35]);
+
+    pdfTextRight(commands, 576, 748, invoiceTypeLabel(invoiceType), 20, "F2");
+    pdfTextRight(commands, 576, 726, invoice.invoiceNumber || "", 10, "F1", [0.31, 0.36, 0.35]);
+    pdfLine(commands, 36, 690, 576, 690, 1.5, [0.12, 0.2, 0.18]);
+
+    pdfText(commands, 36, 664, "BILL TO", 8, "F2", [0.75, 0.39, 0.21]);
+    pdfText(commands, 36, 646, tenant.name || "Tenant", 10, "F2");
+    let billY = 630;
+    if (tenant.unit) {
+      pdfText(commands, 36, billY, tenant.unit, 9);
+      billY -= 13;
+    }
+    billY = pdfWrappedText(commands, tenant.address || "", 36, billY, 220, 9, "F1", 12, 4);
+    if (tenant.email) pdfText(commands, 36, billY - 1, tenant.email, 9, "F1", [0.31, 0.36, 0.35]);
+
+    let factY = 664;
+    factY = pdfFact(commands, 350, factY, "Issue date", formatDate(invoice.issueDate));
+    factY = pdfFact(commands, 350, factY, "Due date", formatDate(invoice.dueDate));
+    factY = pdfFact(commands, 350, factY, "Billing period", invoice.billingPeriod);
+    factY = pdfFact(commands, 350, factY, "Invoice type", invoiceTypeLabel(invoiceType));
+    pdfFact(commands, 350, factY, "Status", invoice.status === "paid" ? "Paid" : "Open");
+
+    let tableY = 560;
+    pdfText(commands, 36, tableY, "TYPE", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfText(commands, 130, tableY, "DESCRIPTION", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfTextRight(commands, 576, tableY, "AMOUNT", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfLine(commands, 36, tableY - 9, 576, tableY - 9, 0.7, [0.82, 0.84, 0.82]);
+    tableY -= 28;
+
+    (invoice.lineItems || []).forEach((item) => {
+      pdfText(commands, 36, tableY, item.type || "", 9);
+      const wrapped = pdfWrapLines(item.description || "", 310, 9, 2);
+      wrapped.forEach((line, index) => pdfText(commands, 130, tableY - index * 11, line, 9));
+      pdfTextRight(commands, 576, tableY, formatMoney(item.amount), 9);
+      tableY -= Math.max(22, wrapped.length * 11 + 10);
+      pdfLine(commands, 36, tableY + 9, 576, tableY + 9, 0.5, [0.86, 0.88, 0.86]);
+    });
+
+    let summaryY = tableY - 12;
+    summaryY = pdfSummary(commands, 390, summaryY, "Subtotal", formatMoney(subtotal), false);
+    summaryY = pdfSummary(commands, 390, summaryY, "Previous balance", formatMoney(invoice.previousBalance), false);
+    summaryY = pdfSummary(commands, 390, summaryY, "Credits / payments", formatMoney(-Number(invoice.credits || 0)), false);
+    pdfLine(commands, 390, summaryY + 4, 576, summaryY + 4, 1.2, [0.12, 0.2, 0.18]);
+    pdfSummary(commands, 390, summaryY - 18, "Total due", formatMoney(totalDue), true);
+
+    const notesY = 222;
+    const footerBlocks = [];
+    if (invoiceAllowsUtility(invoiceType) && utilityDetails.hasTotal) {
+      footerBlocks.push({
+        title: "UTILITY CALCULATION",
+        body: `${utilityDetails.explanation}\n${utilityDetails.billSummary}`,
+      });
+    }
+    const paymentInstructions = invoice.paymentInstructions || landlord.paymentInstructions || "";
+    if (paymentInstructions) footerBlocks.push({ title: "PAYMENT", body: paymentInstructions });
+    if (invoice.notes) footerBlocks.push({ title: "NOTES", body: invoice.notes });
+
+    if (footerBlocks.length) {
+      pdfLine(commands, 36, notesY + 18, 576, notesY + 18, 0.7, [0.82, 0.84, 0.82]);
+      const columns = pdfFooterColumns(footerBlocks.length);
+      footerBlocks.forEach((block, index) => {
+        pdfFooterBlock(commands, columns[index].x, notesY, columns[index].width, block.title, block.body);
+      });
+    }
+
+    return new Blob([assemblePdf(commands)], { type: "application/pdf" });
+  }
+
+  function invoicePdfFileName(invoice, tenant) {
+    const number = sanitizeFileName(invoice.invoiceNumber || "invoice");
+    const tenantName = sanitizeFileName(tenant?.name || "tenant");
+    return `${number}-${tenantName}.pdf`;
+  }
+
+  function pdfFooterColumns(count) {
+    if (count === 1) return [{ x: 36, width: 260 }];
+    if (count === 2)
+      return [
+        { x: 36, width: 240 },
+        { x: 336, width: 240 },
+      ];
+    return [
+      { x: 36, width: 160 },
+      { x: 230, width: 160 },
+      { x: 424, width: 152 },
+    ];
+  }
+
+  function sanitizeFileName(value) {
+    const clean = toPdfText(value)
+      .replace(/[^A-Za-z0-9._ -]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-");
+    return clean || "invoice";
+  }
+
+  function pdfFooterBlock(commands, x, y, width, title, body) {
+    pdfText(commands, x, y, title, 7.5, "F2", [0.75, 0.39, 0.21]);
+    pdfWrappedText(commands, body, x, y - 17, width, 8.5, "F1", 11, 7);
+  }
+
+  function pdfFact(commands, x, y, label, value) {
+    pdfText(commands, x, y, label, 9, "F2", [0.38, 0.44, 0.42]);
+    pdfText(commands, x + 90, y, value || "", 9, "F2");
+    return y - 17;
+  }
+
+  function pdfSummary(commands, x, y, label, value, total) {
+    pdfText(commands, x, y, label, total ? 12 : 9, total ? "F2" : "F1");
+    pdfTextRight(commands, 576, y, value, total ? 12 : 9, "F2");
+    return y - (total ? 18 : 16);
+  }
+
+  function pdfWrappedText(commands, value, x, y, width, size, font = "F1", lineHeight = size + 3, maxLines = 99) {
+    const lines = pdfWrapLines(value, width, size, maxLines);
+    lines.forEach((line, index) => {
+      pdfText(commands, x, y - index * lineHeight, line, size, font);
+    });
+    return y - lines.length * lineHeight;
+  }
+
+  function pdfWrapLines(value, width, size, maxLines = 99) {
+    const maxChars = Math.max(8, Math.floor(width / (size * 0.52)));
+    const paragraphs = toPdfText(value).split(/\n/);
+    const lines = [];
+
+    paragraphs.forEach((paragraph) => {
+      const words = paragraph.trim().split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        lines.push("");
+        return;
+      }
+      let line = "";
+      words.forEach((word) => {
+        const next = line ? `${line} ${word}` : word;
+        if (next.length > maxChars && line) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = next;
+        }
+      });
+      if (line) lines.push(line);
+    });
+
+    if (lines.length > maxLines) {
+      const clipped = lines.slice(0, maxLines);
+      clipped[clipped.length - 1] = `${clipped[clipped.length - 1].slice(0, Math.max(0, maxChars - 3))}...`;
+      return clipped;
+    }
+    return lines;
+  }
+
+  function pdfText(commands, x, y, value, size = 9, font = "F1", color = [0.1, 0.15, 0.14]) {
+    commands.push(
+      `${pdfColor(color, false)} BT /${font} ${size} Tf ${pdfNumber(x)} ${pdfNumber(y)} Td (${escapePdfString(
+        value
+      )}) Tj ET`
+    );
+  }
+
+  function pdfTextRight(commands, x, y, value, size = 9, font = "F1", color = [0.1, 0.15, 0.14]) {
+    const text = toPdfText(value);
+    pdfText(commands, x - estimatePdfTextWidth(text, size, font), y, text, size, font, color);
+  }
+
+  function pdfLine(commands, x1, y1, x2, y2, width = 1, color = [0.1, 0.15, 0.14]) {
+    commands.push(
+      `q ${pdfColor(color, true)} ${pdfNumber(width)} w ${pdfNumber(x1)} ${pdfNumber(y1)} m ${pdfNumber(
+        x2
+      )} ${pdfNumber(y2)} l S Q`
+    );
+  }
+
+  function pdfColor(color, stroke) {
+    return `${color.map((item) => pdfNumber(item)).join(" ")} ${stroke ? "RG" : "rg"}`;
+  }
+
+  function pdfNumber(value) {
+    return Number(value).toFixed(3).replace(/\.?0+$/, "");
+  }
+
+  function estimatePdfTextWidth(value, size, font) {
+    return toPdfText(value).length * size * (font === "F2" ? 0.56 : 0.52);
+  }
+
+  function escapePdfString(value) {
+    return toPdfText(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  }
+
+  function toPdfText(value) {
+    return String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\x20-\x7E\n]/g, " ")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+  }
+
+  function assemblePdf(commands) {
+    const content = `${commands.join("\n")}\n`;
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+      `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+    ];
+
+    let pdf = "%PDF-1.4\n% Rent Ledger\n";
+    const offsets = [0];
+    objects.forEach((object, index) => {
+      offsets.push(pdf.length);
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    });
+    const xrefOffset = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    offsets.slice(1).forEach((offset) => {
+      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+    return pdf;
   }
 
   function importBackup(event) {

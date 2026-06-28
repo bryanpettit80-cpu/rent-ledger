@@ -16,6 +16,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
 - Shows a live invoice preview before printing or saving.
 - Prints invoices to paper or PDF through the browser.
+- Generates invoice PDFs and saves them to Google Drive when Drive is connected.
 - Saves invoice history in the current browser.
 - Exports full JSON backups and imports tenant-only JSON files.
 - Keeps a rolling local backup history in browser storage.
@@ -177,6 +178,12 @@ In `Settings`:
 5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
 
 When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then auto-sync the JSON state to Drive while the Drive connection is active.
+
+The invoice screen also has `Save PDF to Drive`. That button saves the current invoice locally, updates the Drive state JSON, generates a PDF, and uploads it to:
+
+```text
+Rent Ledger/Invoices/
+```
 
 Browser security still requires a user sign-in/authorization step. If the browser reloads or the token expires, reconnect Drive before relying on auto-sync.
 
