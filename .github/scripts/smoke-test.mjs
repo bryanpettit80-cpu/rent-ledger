@@ -137,7 +137,24 @@ try {
   assert(settingsState.driveStatus === "Not connected: click Authorize Drive.", `Unexpected Drive status: ${settingsState.driveStatus}.`);
   assert(settingsState.help.includes("These actions save the connection fields first"), "Drive help must explain settings auto-save.");
 
-  await page.fill("#googleClientId", "bad-client-id");
+  const testClientId = "123456789012-testclient.apps.googleusercontent.com";
+  await page.evaluate(() => {
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient() {
+            return {
+              callback: () => {},
+              requestAccessToken() {
+                this.callback({ error: "test_error" });
+              },
+            };
+          },
+        },
+      },
+    };
+  });
+  await page.fill("#googleClientId", testClientId);
   await page.check("#driveAutoSync");
   await page.click("#connectDrive");
   const storedSettings = await page.evaluate(() => {
@@ -148,11 +165,11 @@ try {
       driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
     };
   });
-  assert(storedSettings.googleClientId === "bad-client-id", "Drive action should save edited client ID first.");
+  assert(storedSettings.googleClientId === testClientId, "Drive action should save edited client ID first.");
   assert(storedSettings.driveAutoSync === true, "Drive action should save edited auto-sync setting first.");
   assert(
-    storedSettings.driveStatus === "Setup needed: client ID format is invalid.",
-    `Unexpected invalid client status: ${storedSettings.driveStatus}.`
+    storedSettings.driveStatus === "Google authorization was cancelled or failed.",
+    `Unexpected mocked authorization status: ${storedSettings.driveStatus}.`
   );
 } finally {
   await context.close();
