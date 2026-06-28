@@ -310,6 +310,50 @@ button {
   padding: 8px 22px 22px;
 }
 
+.cycle-workflow-panel {
+  max-width: 1240px;
+  margin: 0 auto clamp(18px, 3vw, 28px);
+}
+
+.cycle-form {
+  display: grid;
+  gap: 14px;
+  padding: 0 22px 18px;
+}
+
+.cycle-list {
+  display: grid;
+  gap: 10px;
+  padding: 8px 22px 22px;
+}
+
+.cycle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-muted);
+}
+
+.cycle-row h3 {
+  margin: 0 0 4px;
+  font-size: 0.98rem;
+}
+
+.cycle-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.cycle-row > strong {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .panel {
   border: 1px solid rgba(32, 51, 47, 0.14);
   border-radius: var(--radius);
@@ -518,6 +562,27 @@ button:focus-visible {
   font-size: 0.82rem;
 }
 
+.advanced-charges {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.advanced-charges summary {
+  min-height: var(--tap);
+  padding: 12px 14px;
+  color: var(--brand);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.advanced-charges-body {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding: 14px;
+}
+
 .line-item {
   display: grid;
   grid-template-columns: minmax(112px, 0.9fr) minmax(150px, 1.3fr) minmax(96px, 0.55fr) var(--tap);
@@ -604,6 +669,10 @@ button:focus-visible {
 
 .small-button.danger {
   color: var(--danger);
+}
+
+.mobile-preview-button {
+  display: none;
 }
 
 .primary-button:disabled,
@@ -1042,6 +1111,7 @@ button:focus-visible {
   .grid.three,
   .grid.four,
   .line-item,
+  .cycle-row,
   .doc-grid {
     grid-template-columns: 1fr;
   }
@@ -1057,6 +1127,20 @@ button:focus-visible {
   .button-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-preview-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .view-invoice .preview-panel {
+    display: none;
+  }
+
+  .view-invoice .preview-panel.is-preview-visible {
+    display: block;
   }
 
   .button-row button {
@@ -1088,6 +1172,10 @@ button:focus-visible {
   .card-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cycle-row .card-actions {
+    grid-template-columns: 1fr;
   }
 
   .overview-metrics,
@@ -1145,6 +1233,7 @@ button:focus-visible {
 
   .preview-panel,
   .panel {
+    display: block !important;
     border: 0;
     box-shadow: none;
     overflow: visible;

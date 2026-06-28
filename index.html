@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v24" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v25" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v24" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v25" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v24</strong>
+              <strong id="splashVersion">rent-ledger-v25</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -94,12 +94,16 @@
               </div>
               <div class="workflow-actions">
                 <button class="workflow-button" id="startRentWorkflow" type="button">
-                  <span>Rent</span>
+                  <span>Create Rent Invoices</span>
                   <strong id="rentWorkflowCount">0 remaining</strong>
                 </button>
                 <button class="workflow-button" id="startUtilityWorkflow" type="button">
-                  <span>Utilities</span>
+                  <span>Calculate Utilities</span>
                   <strong id="utilityWorkflowCount">0 remaining</strong>
+                </button>
+                <button class="workflow-button" id="reviewInvoicesWorkflow" type="button">
+                  <span>Review Saved Invoices</span>
+                  <strong id="invoiceWorkflowCount">0 saved this cycle</strong>
                 </button>
               </div>
             </section>
@@ -136,6 +140,63 @@
         </section>
 
         <section class="view view-invoice" id="view-invoice" aria-labelledby="invoiceHeading">
+          <section class="panel cycle-workflow-panel" id="rentBatchPanel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Rent cycle</p>
+                <h1 id="rentBatchHeading">Rent Invoices</h1>
+                <p class="panel-copy" id="rentBatchCopy">Review active tenants before creating rent invoices.</p>
+              </div>
+              <button class="primary-button" id="createAllRentInvoices" type="button">Create all rent invoices</button>
+            </div>
+            <div class="cycle-list" id="rentBatchList"></div>
+          </section>
+
+          <section class="panel cycle-workflow-panel" id="utilityBatchPanel" hidden>
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Utility cycle</p>
+                <h1 id="utilityBatchHeading">Utility Allocation</h1>
+                <p class="panel-copy" id="utilityBatchCopy">Enter the bills once, then create utility invoices for every billable tenant.</p>
+              </div>
+              <button class="primary-button" id="createAllUtilityInvoices" type="button">Create all utilities</button>
+            </div>
+            <div class="cycle-form">
+              <div class="grid three">
+                <label>
+                  Method
+                  <select id="cycleUtilityMethod">
+                    <option value="occupancyUnits">Occupancy units</option>
+                    <option value="equalSplit">Equal split</option>
+                  </select>
+                </label>
+                <label>
+                  Total units / shares
+                  <input id="cycleUtilityTotalUnits" type="number" min="0" step="0.01" />
+                </label>
+                <label>
+                  Other utilities
+                  <input id="cycleUtilityOther" type="number" min="0" step="0.01" />
+                </label>
+              </div>
+              <div class="grid three">
+                <label>
+                  Dominion / electric
+                  <input id="cycleUtilityElectric" type="number" min="0" step="0.01" />
+                </label>
+                <label>
+                  HRSD / water
+                  <input id="cycleUtilityWaterSewer" type="number" min="0" step="0.01" />
+                </label>
+                <label>
+                  Gas
+                  <input id="cycleUtilityGas" type="number" min="0" step="0.01" />
+                </label>
+              </div>
+            </div>
+            <div class="cycle-list" id="utilityAllocationList"></div>
+          </section>
+
           <div class="workspace">
             <section class="panel editor-panel">
               <div class="panel-header">
@@ -145,7 +206,7 @@
                   <p class="panel-copy" id="workflowCopy">Create monthly rent invoices for active tenants.</p>
                 </div>
                 <div class="invoice-header-tools">
-                  <span class="status-pill" id="invoiceStatus">Not saved</span>
+                  <span class="status-pill" id="invoiceStatus">Draft</span>
                 </div>
               </div>
 
@@ -186,10 +247,7 @@
                       <p class="eyebrow">Utilities</p>
                       <h2 id="utilityCalcHeading">Utility Allocation</h2>
                     </div>
-                    <div class="charge-actions">
-                      <button class="small-button" id="applyUtilityCharge" type="button">Apply charge</button>
-                      <button class="small-button" id="batchUtilityInvoices" type="button">Create all utilities</button>
-                    </div>
+                    <button class="small-button" id="applyUtilityCharge" type="button">Apply charge</button>
                   </div>
 
                   <div class="grid three">
@@ -233,15 +291,20 @@
                   <div class="utility-result secondary" id="utilityBatchSummary"></div>
                 </section>
 
-                <div class="section-heading">
-                  <h2>Charges</h2>
-                  <div class="charge-actions">
-                    <button class="small-button" id="applyRentCharge" type="button">Apply charge</button>
-                    <button class="small-button" id="addLineItem" type="button">Add item</button>
-                  </div>
-                </div>
+                <details class="advanced-charges" id="advancedCharges">
+                  <summary>Edit charges</summary>
+                  <div class="advanced-charges-body">
+                    <div class="section-heading">
+                      <h2>Charges</h2>
+                      <div class="charge-actions">
+                        <button class="small-button" id="applyRentCharge" type="button">Apply charge</button>
+                        <button class="small-button" id="addLineItem" type="button">Add item</button>
+                      </div>
+                    </div>
 
-                <div class="line-items" id="lineItems" aria-live="polite"></div>
+                    <div class="line-items" id="lineItems" aria-live="polite"></div>
+                  </div>
+                </details>
 
                 <div class="grid two">
                   <label>
@@ -267,6 +330,7 @@
                 <div class="button-row">
                   <button class="primary-button" id="saveInvoice" type="submit">Save</button>
                   <button class="secondary-button" id="printInvoice" type="button">Print</button>
+                  <button class="secondary-button mobile-preview-button" id="togglePreview" type="button">Preview</button>
                 </div>
               </form>
             </section>
@@ -277,7 +341,7 @@
                   <p class="eyebrow">Preview</p>
                   <h2>Invoice Document</h2>
                 </div>
-                <span id="saveState" class="save-state">Unsaved</span>
+                <span id="saveState" class="save-state">Draft</span>
               </div>
 
               <article class="invoice-sheet" id="invoicePreview" aria-label="Invoice preview"></article>
@@ -504,6 +568,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v24" defer></script>
+    <script src="app.js?v=rent-ledger-v25" defer></script>
   </body>
 </html>

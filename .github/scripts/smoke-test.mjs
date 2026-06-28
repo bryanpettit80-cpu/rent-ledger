@@ -116,22 +116,47 @@ try {
   }, appVersion);
 
   await page.reload({ waitUntil: "networkidle" });
+
+  const overviewState = await page.evaluate(() => ({
+    hash: window.location.hash,
+    overviewActive: document.getElementById("view-overview")?.classList.contains("is-active"),
+    workflowButtons: [...document.querySelectorAll(".workflow-button span")].map((button) => button.textContent.trim()),
+    rentCount: document.getElementById("rentWorkflowCount")?.textContent?.trim(),
+    utilityCount: document.getElementById("utilityWorkflowCount")?.textContent?.trim(),
+  }));
+  assert(overviewState.overviewActive, "App should open on the Overview workflow page.");
+  assert(
+    overviewState.workflowButtons.join("|") === "Create Rent Invoices|Calculate Utilities|Review Saved Invoices",
+    `Unexpected overview workflow buttons: ${overviewState.workflowButtons.join("|")}.`
+  );
+  assert(overviewState.rentCount === "2 remaining", `Expected 2 rent invoices remaining, got ${overviewState.rentCount}.`);
+  assert(
+    overviewState.utilityCount === "2 remaining",
+    `Expected 2 utility invoices remaining, got ${overviewState.utilityCount}.`
+  );
+
   await page.click('[data-view="rent"]');
 
   const rentState = await page.evaluate(() => {
     const utility = document.getElementById("utilityCalculator");
+    const preview = document.querySelector(".preview-panel");
     return {
       splashVersion: document.getElementById("splashVersion")?.textContent?.trim(),
       invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
       saveState: document.getElementById("saveState")?.textContent?.trim(),
       startNewExists: Boolean(document.getElementById("newInvoice")),
       markPaidExists: Boolean(document.getElementById("markPaid")),
+      rentPanelHidden: document.getElementById("rentBatchPanel")?.hidden,
+      rentRows: document.querySelectorAll("#rentBatchList .cycle-row").length,
+      createAllRentLabel: document.getElementById("createAllRentInvoices")?.textContent?.trim(),
+      advancedOpen: document.getElementById("advancedCharges")?.open,
+      previewButtonDisplay: getComputedStyle(document.getElementById("togglePreview")).display,
+      previewDisplay: preview ? getComputedStyle(preview).display : "",
       invoiceNumber: document.getElementById("invoiceNumber")?.value,
       billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
       applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
-      applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
       invoiceButtons: [...document.querySelectorAll("#invoiceForm > .button-row button")].map((button) =>
         button.textContent.trim()
       ),
@@ -143,22 +168,46 @@ try {
   });
 
   assert(rentState.splashVersion === appVersion, `Expected splash version ${appVersion}, got ${rentState.splashVersion}.`);
-  assert(rentState.invoiceStatus === "Not saved", `Expected Not saved status, got ${rentState.invoiceStatus}.`);
-  assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
+  assert(rentState.invoiceStatus === "Draft", `Expected Draft status, got ${rentState.invoiceStatus}.`);
+  assert(rentState.saveState === "Draft", `Expected Draft save-state, got ${rentState.saveState}.`);
   assert(!rentState.startNewExists, "Start new should not appear in the invoice editor.");
   assert(!rentState.markPaidExists, "Mark paid should not appear in the invoice editor header.");
+  assert(rentState.rentPanelHidden === false, "Rent tab must show the rent cycle panel.");
+  assert(rentState.rentRows === 2, `Expected 2 rent cycle rows, got ${rentState.rentRows}.`);
+  assert(
+    rentState.createAllRentLabel === "Create all rent invoices",
+    `Unexpected rent batch button: ${rentState.createAllRentLabel}.`
+  );
+  assert(rentState.advancedOpen === false, "Advanced charge editor should be closed by default.");
+  assert(rentState.previewButtonDisplay !== "none", "Mobile Preview button should be visible.");
+  assert(rentState.previewDisplay === "none", `Mobile preview should be hidden by default, got ${rentState.previewDisplay}.`);
   assert(
     expectedRentInvoiceNumber.test(rentState.invoiceNumber || ""),
     `Expected rent invoice number to match ${expectedRentInvoiceNumber}, got ${rentState.invoiceNumber}.`
   );
   assert(rentState.billingPeriod === expectedRentPeriod, `Expected rent period ${expectedRentPeriod}, got ${rentState.billingPeriod}.`);
   assert(rentState.utilityHidden && rentState.utilityDisplay === "none", "Rent tab must hide the utility calculator.");
-  assert(!rentState.applyRentHidden && rentState.applyRentDisplay !== "none", "Rent Apply charge button should be visible.");
-  assert(rentState.invoiceButtons.join("|") === "Save|Print", `Expected Save|Print, got ${rentState.invoiceButtons.join("|")}.`);
+  assert(!rentState.applyRentHidden, "Rent Apply charge button should be available inside Edit charges.");
+  assert(
+    rentState.invoiceButtons.join("|") === "Save|Print|Preview",
+    `Expected Save|Print|Preview, got ${rentState.invoiceButtons.join("|")}.`
+  );
   assert(rentState.lineTypes.join("|") === "Rent", `Expected one Rent line, got ${rentState.lineTypes.join("|")}.`);
   assert(rentState.lineAmounts[0] === "850", `Expected rent amount 850, got ${rentState.lineAmounts[0]}.`);
   assert(rentState.scrollWidth <= rentState.width + 1, `Mobile overflow: ${rentState.scrollWidth} > ${rentState.width}.`);
 
+  await page.click("#togglePreview");
+  const previewVisible = await page.evaluate(() => ({
+    display: getComputedStyle(document.querySelector(".preview-panel")).display,
+    label: document.getElementById("togglePreview")?.textContent?.trim(),
+  }));
+  assert(previewVisible.display !== "none", "Preview button should show the mobile preview panel.");
+  assert(previewVisible.label === "Hide preview", `Expected Hide preview label, got ${previewVisible.label}.`);
+  await page.click("#togglePreview");
+
+  await page.locator("#advancedCharges").evaluate((details) => {
+    details.open = true;
+  });
   await page.click('[data-remove-line="0"]');
   const emptyText = await page.locator("#lineItems").textContent();
   assert(emptyText.includes("Apply the rent charge"), `Unexpected empty rent message: ${emptyText}.`);
@@ -172,75 +221,6 @@ try {
   assert(appliedRent.lineTypes.join("|") === "Rent", "Apply charge should restore the Rent line.");
   assert(appliedRent.lineAmounts[0] === "850", `Apply charge restored wrong rent amount: ${appliedRent.lineAmounts[0]}.`);
   assert(appliedRent.total === "$850.00", `Expected $850.00 total, got ${appliedRent.total}.`);
-
-  await page.click('[data-view="utility"]');
-  await page.waitForFunction(
-    () => window.location.hash === "#utility" && document.getElementById("invoiceType")?.value === "utility"
-  );
-  await page.waitForTimeout(100);
-  const utilityState = await page.evaluate(() => {
-    const utility = document.getElementById("utilityCalculator");
-    return {
-      invoiceType: document.getElementById("invoiceType")?.value,
-      invoiceNumber: document.getElementById("invoiceNumber")?.value,
-      billingPeriod: document.getElementById("billingPeriod")?.value,
-      utilityHidden: utility?.hidden,
-      utilityDisplay: utility ? getComputedStyle(utility).display : "",
-      applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
-      applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
-      batchButton: document.getElementById("batchUtilityInvoices")?.textContent?.trim(),
-      batchSummary: document.getElementById("utilityBatchSummary")?.textContent?.trim(),
-    };
-  });
-  assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
-  assert(
-    expectedUtilityInvoiceNumber.test(utilityState.invoiceNumber || ""),
-    `Expected utility invoice number to match ${expectedUtilityInvoiceNumber}, got ${utilityState.invoiceNumber}.`
-  );
-  assert(
-    utilityState.billingPeriod === expectedUtilityPeriod,
-    `Expected utility period ${expectedUtilityPeriod}, got ${utilityState.billingPeriod}.`
-  );
-  assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
-  assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
-  assert(utilityState.batchButton === "Create all utilities", `Expected utility batch button, got ${utilityState.batchButton}.`);
-  assert(utilityState.batchSummary.includes("2 utility-billable tenants"), `Unexpected batch summary: ${utilityState.batchSummary}.`);
-
-  await page.evaluate(() => {
-    const values = {
-      utilityTotalUnits: "3",
-      utilityElectric: "120",
-      utilityWaterSewer: "60",
-      utilityGas: "30",
-    };
-    for (const [id, value] of Object.entries(values)) {
-      const input = document.getElementById(id);
-      input.value = value;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-  });
-  await page.waitForFunction(
-    () =>
-      document.getElementById("utilityTotalUnits")?.value === "3" &&
-      document.getElementById("utilityElectric")?.value === "120" &&
-      document.getElementById("utilityWaterSewer")?.value === "60" &&
-      document.getElementById("utilityGas")?.value === "30"
-  );
-  await page.selectOption("#tenantSelect", "brenda");
-  const utilityTenantSwitch = await page.evaluate(() => ({
-    tenantId: document.getElementById("tenantSelect")?.value,
-    tenantUnits: document.getElementById("utilityTenantUnits")?.value,
-    totalUnits: document.getElementById("utilityTotalUnits")?.value,
-    electric: document.getElementById("utilityElectric")?.value,
-    waterSewer: document.getElementById("utilityWaterSewer")?.value,
-    gas: document.getElementById("utilityGas")?.value,
-  }));
-  assert(utilityTenantSwitch.tenantId === "brenda", `Expected selected utility tenant brenda, got ${utilityTenantSwitch.tenantId}.`);
-  assert(utilityTenantSwitch.tenantUnits === "2", `Expected Brenda utility units 2, got ${utilityTenantSwitch.tenantUnits}.`);
-  assert(utilityTenantSwitch.totalUnits === "3", `Expected total utility units to persist, got ${utilityTenantSwitch.totalUnits}.`);
-  assert(utilityTenantSwitch.electric === "120", `Expected electric total to persist, got ${utilityTenantSwitch.electric}.`);
-  assert(utilityTenantSwitch.waterSewer === "60", `Expected water/sewer total to persist, got ${utilityTenantSwitch.waterSewer}.`);
-  assert(utilityTenantSwitch.gas === "30", `Expected gas total to persist, got ${utilityTenantSwitch.gas}.`);
 
   page.on("dialog", (dialog) => dialog.accept());
   await page.evaluate(() => {
@@ -259,19 +239,139 @@ try {
       },
     };
   });
-  await page.click("#batchUtilityInvoices");
-  await page.waitForFunction(() => window.location.hash === "#invoices");
+  await page.click("#createAllRentInvoices");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices?.filter((invoice) => invoice.invoiceType === "rent").length === 2;
+  });
+  await page.waitForFunction(() => document.getElementById("saveState")?.textContent?.trim() === "Saved locally");
+  const rentBatchState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const rentInvoices = (state.invoices || []).filter((invoice) => invoice.invoiceType === "rent");
+    return {
+      hash: window.location.hash,
+      rows: [...document.querySelectorAll("#rentBatchList .cycle-row")].map((row) => row.textContent.trim()),
+      invoiceNumbers: rentInvoices.map((invoice) => invoice.invoiceNumber),
+      driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
+      saveState: document.getElementById("saveState")?.textContent?.trim(),
+    };
+  });
+  assert(rentBatchState.hash === "#rent", `Rent batch should stay on the rent workflow, got ${rentBatchState.hash}.`);
+  assert(rentBatchState.rows.every((row) => row.includes("Open")), `Rent rows should show Open after batch create.`);
+  assert(
+    rentBatchState.invoiceNumbers.every((number) => expectedRentInvoiceNumber.test(number)),
+    `Batch rent invoice numbers did not match ${expectedRentInvoiceNumber}: ${rentBatchState.invoiceNumbers.join(", ")}.`
+  );
+  assert(rentBatchState.saveState === "Saved locally", `Expected saved-local state after mocked Drive failure, got ${rentBatchState.saveState}.`);
+
+  await page.click('[data-view="utility"]');
+  await page.waitForFunction(
+    () => window.location.hash === "#utility" && document.getElementById("invoiceType")?.value === "utility"
+  );
+  await page.waitForTimeout(100);
+  const utilityState = await page.evaluate(() => {
+    const utility = document.getElementById("utilityCalculator");
+    return {
+      invoiceType: document.getElementById("invoiceType")?.value,
+      invoiceNumber: document.getElementById("invoiceNumber")?.value,
+      billingPeriod: document.getElementById("billingPeriod")?.value,
+      utilityPanelHidden: document.getElementById("utilityBatchPanel")?.hidden,
+      utilityRows: document.querySelectorAll("#utilityAllocationList .cycle-row").length,
+      utilityHidden: utility?.hidden,
+      utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
+      applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
+      batchButton: document.getElementById("createAllUtilityInvoices")?.textContent?.trim(),
+      oldBatchButtonExists: Boolean(document.getElementById("batchUtilityInvoices")),
+      batchSummary: document.getElementById("utilityBatchSummary")?.textContent?.trim(),
+    };
+  });
+  assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
+  assert(
+    expectedUtilityInvoiceNumber.test(utilityState.invoiceNumber || ""),
+    `Expected utility invoice number to match ${expectedUtilityInvoiceNumber}, got ${utilityState.invoiceNumber}.`
+  );
+  assert(
+    utilityState.billingPeriod === expectedUtilityPeriod,
+    `Expected utility period ${expectedUtilityPeriod}, got ${utilityState.billingPeriod}.`
+  );
+  assert(utilityState.utilityPanelHidden === false, "Utility tab must show the utility cycle panel.");
+  assert(utilityState.utilityRows === 2, `Expected 2 utility allocation rows, got ${utilityState.utilityRows}.`);
+  assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
+  assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
+  assert(!utilityState.oldBatchButtonExists, "Old editor-level utility batch button should be removed.");
+  assert(utilityState.batchButton === "Create all utilities", `Expected utility batch button, got ${utilityState.batchButton}.`);
+  assert(utilityState.batchSummary.includes("2 utility-billable tenants"), `Unexpected batch summary: ${utilityState.batchSummary}.`);
+
+  await page.evaluate(() => {
+    const values = {
+      cycleUtilityTotalUnits: "3",
+      cycleUtilityElectric: "120",
+      cycleUtilityWaterSewer: "60",
+      cycleUtilityGas: "30",
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const input = document.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  await page.waitForFunction(
+    () =>
+      document.getElementById("cycleUtilityTotalUnits")?.value === "3" &&
+      document.getElementById("cycleUtilityElectric")?.value === "120" &&
+      document.getElementById("cycleUtilityWaterSewer")?.value === "60" &&
+      document.getElementById("cycleUtilityGas")?.value === "30"
+  );
+  await page.selectOption("#tenantSelect", "brenda");
+  const utilityTenantSwitch = await page.evaluate(() => ({
+    tenantId: document.getElementById("tenantSelect")?.value,
+    tenantUnits: document.getElementById("utilityTenantUnits")?.value,
+    totalUnits: document.getElementById("utilityTotalUnits")?.value,
+    electric: document.getElementById("utilityElectric")?.value,
+    waterSewer: document.getElementById("utilityWaterSewer")?.value,
+    gas: document.getElementById("utilityGas")?.value,
+    cycleTotalUnits: document.getElementById("cycleUtilityTotalUnits")?.value,
+    cycleElectric: document.getElementById("cycleUtilityElectric")?.value,
+    cycleWaterSewer: document.getElementById("cycleUtilityWaterSewer")?.value,
+    cycleGas: document.getElementById("cycleUtilityGas")?.value,
+  }));
+  assert(utilityTenantSwitch.tenantId === "brenda", `Expected selected utility tenant brenda, got ${utilityTenantSwitch.tenantId}.`);
+  assert(utilityTenantSwitch.tenantUnits === "2", `Expected Brenda utility units 2, got ${utilityTenantSwitch.tenantUnits}.`);
+  assert(utilityTenantSwitch.totalUnits === "3", `Expected total utility units to persist, got ${utilityTenantSwitch.totalUnits}.`);
+  assert(utilityTenantSwitch.electric === "120", `Expected electric total to persist, got ${utilityTenantSwitch.electric}.`);
+  assert(utilityTenantSwitch.waterSewer === "60", `Expected water/sewer total to persist, got ${utilityTenantSwitch.waterSewer}.`);
+  assert(utilityTenantSwitch.gas === "30", `Expected gas total to persist, got ${utilityTenantSwitch.gas}.`);
+  assert(utilityTenantSwitch.cycleTotalUnits === "3", `Expected cycle utility units to persist, got ${utilityTenantSwitch.cycleTotalUnits}.`);
+  assert(utilityTenantSwitch.cycleElectric === "120", `Expected cycle electric to persist, got ${utilityTenantSwitch.cycleElectric}.`);
+  assert(
+    utilityTenantSwitch.cycleWaterSewer === "60",
+    `Expected cycle water/sewer to persist, got ${utilityTenantSwitch.cycleWaterSewer}.`
+  );
+  assert(utilityTenantSwitch.cycleGas === "30", `Expected cycle gas to persist, got ${utilityTenantSwitch.cycleGas}.`);
+
+  await page.click("#createAllUtilityInvoices");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices?.filter((invoice) => invoice.invoiceType === "utility").length === 2;
+  });
+  await page.waitForFunction(
+    () => document.getElementById("driveStatus")?.textContent?.trim() === "Google Drive confirmation was cancelled or expired."
+  );
   const batchState = await page.evaluate(() => ({
-    cards: [...document.querySelectorAll("#invoiceHistory .invoice-card")].map((card) => card.textContent.trim()),
-    invoiceNumbers: [...document.querySelectorAll("#invoiceHistory .invoice-card h3")].map((heading) =>
-      heading.textContent.trim().split(" ")[0]
-    ),
+    hash: window.location.hash,
+    rows: [...document.querySelectorAll("#utilityAllocationList .cycle-row")].map((row) => row.textContent.trim()),
+    invoiceNumbers: (JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [])
+      .filter((invoice) => invoice.invoiceType === "utility")
+      .map((invoice) => invoice.invoiceNumber),
     driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
-    buttons: [...document.querySelectorAll("#invoiceHistory [data-toggle-paid-invoice]")].map((button) =>
+    buttons: [...document.querySelectorAll("#utilityAllocationList [data-toggle-paid-invoice]")].map((button) =>
       button.textContent.trim()
     ),
   }));
-  assert(batchState.cards.length === 2, `Expected 2 generated utility invoices, got ${batchState.cards.length}.`);
+  assert(batchState.hash === "#utility", `Utility batch should stay on the utility workflow, got ${batchState.hash}.`);
+  assert(batchState.rows.length === 2, `Expected 2 generated utility rows, got ${batchState.rows.length}.`);
+  assert(batchState.rows.every((row) => row.includes("Open")), `Utility rows should show Open after batch create.`);
   assert(
     batchState.invoiceNumbers.every((number) => expectedUtilityInvoiceNumber.test(number)),
     `Batch utility invoice numbers did not match ${expectedUtilityInvoiceNumber}: ${batchState.invoiceNumbers.join(", ")}.`
@@ -282,10 +382,10 @@ try {
     `Unexpected batch Drive status: ${batchState.driveStatus}.`
   );
 
-  await page.click("#invoiceHistory [data-toggle-paid-invoice]");
+  await page.click("#utilityAllocationList [data-toggle-paid-invoice]");
   const paidState = await page.evaluate(() => ({
-    firstCardText: document.querySelector("#invoiceHistory .invoice-card")?.textContent.trim(),
-    firstToggle: document.querySelector("#invoiceHistory [data-toggle-paid-invoice]")?.textContent.trim(),
+    firstCardText: document.querySelector("#utilityAllocationList .cycle-row")?.textContent.trim(),
+    firstToggle: document.querySelector("#utilityAllocationList [data-toggle-paid-invoice]")?.textContent.trim(),
   }));
   assert(paidState.firstCardText.includes("Paid"), `Expected first invoice card to show Paid: ${paidState.firstCardText}.`);
   assert(paidState.firstToggle === "Reopen", `Expected Reopen after marking paid, got ${paidState.firstToggle}.`);

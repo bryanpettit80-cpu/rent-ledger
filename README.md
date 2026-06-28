@@ -13,6 +13,8 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Creates separate `Rent invoice` and `Utility invoice` records.
 - Stores tenant profiles, landlord contact details, and payment instructions.
 - Calculates utility reimbursements from actual utility bills.
+- Starts on a current-cycle overview that shows what still needs to be billed.
+- Creates all remaining rent invoices for the current cycle from the Rent workflow.
 - Creates all remaining utility invoices for the current cycle from one utility calculation.
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
 - Shows a live invoice preview before printing or saving.
@@ -74,35 +76,44 @@ Example: on June 28, 2026, the rent billing period is `July 2026`, the rent invo
 
 ### Rent Invoice
 
-Use `Rent invoice` for the monthly rent charge only.
+Use the Rent workflow for monthly rent charges.
 
 Rent invoices:
 
 - Use invoice numbers like `RNT-2026-07-0001`.
 - Include the tenant's monthly rent line.
 - Hide the utility calculator.
-- Use `Apply charge` to refresh the rent line from the selected tenant's current monthly rent.
+- Show active tenants first so you can create one missing rent invoice or use `Create all rent invoices`.
+- Keep `Apply charge` inside `Edit charges` for the rare case where you need to refresh the rent line from the selected tenant's current monthly rent.
 - Are the preferred way to bill predictable monthly rent.
 
 ### Utility Invoice
 
-Use `Utility invoice` after the actual utility bills are available.
+Use the Utility workflow after the actual utility bills are available.
 
 Utility invoices:
 
 - Use invoice numbers like `UTL-2026-06-0001`.
 - Do not include rent.
-- Show the Utility Allocation section.
+- Show the shared Utility Allocation inputs first.
 - Add the calculated utility reimbursement as a generated charge line.
 - Use `Create all utilities` to generate utility invoices for every utility-billable tenant who is still missing one for the current utility period.
 - Show the allocation math on the invoice preview.
+- Let you open an individual utility invoice afterward if you need a one-off adjustment.
+
+### Editing Charges And Preview
+
+Normal rent and utility invoices should not require manual charge editing. The raw line-item editor is behind `Edit charges` so the primary workflow stays focused on tenant, period, amount, save, and print.
+
+On mobile, the invoice document preview is hidden until you tap `Preview`. Desktop screens continue to show the editor and preview side by side.
 
 ### Invoice States
 
 The invoice header uses these states:
 
-- `Not saved`: the current invoice is a working draft in the browser and has not been saved as an invoice record.
-- `Saved`: the invoice is saved in the browser. If Drive is connected, `Save` also uploads app data and the invoice PDF to Drive.
+- `Draft`: the current invoice is a working draft in the browser and has not been saved as an invoice record.
+- `Saved locally`: the invoice is saved in the browser.
+- `Saved to Drive`: the invoice is saved in the browser and the invoice PDF/state upload completed in Google Drive.
 - `Unsaved changes`: a saved invoice was edited after its last save.
 - `Paid`: the saved invoice has been marked paid from the Invoices page or overview invoice list.
 
@@ -200,7 +211,7 @@ The invoice screen has one `Save` button. It saves the current invoice to the br
 Rent Ledger/Invoices/
 ```
 
-The utility workflow's `Create all utilities` button creates all missing utility invoices locally first, then uploads the updated state and each generated PDF to Drive when Drive is connected.
+The Rent workflow's `Create all rent invoices` button and the Utility workflow's `Create all utilities` button create all missing invoices locally first, then upload the updated state and each generated PDF to Drive when Drive is connected.
 
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 

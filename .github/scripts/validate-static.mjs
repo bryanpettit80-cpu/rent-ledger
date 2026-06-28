@@ -43,7 +43,12 @@ assert(files.serviceWorker.includes(`./manifest.webmanifest?v=${appVersion}`), "
 
 assert(files.html.includes('id="applyRentCharge"'), "Rent workflow must include the Apply charge button.");
 assert(files.html.includes('data-view="invoices"'), "Navigation must include the Invoices page.");
-assert(files.html.includes('id="batchUtilityInvoices"'), "Utility workflow must include the batch utility button.");
+assert(files.html.includes('id="rentBatchPanel"'), "Rent workflow must include the rent cycle panel.");
+assert(files.html.includes('id="createAllRentInvoices"'), "Rent workflow must include the rent batch button.");
+assert(files.html.includes('id="utilityBatchPanel"'), "Utility workflow must include the utility cycle panel.");
+assert(files.html.includes('id="createAllUtilityInvoices"'), "Utility workflow must include the utility batch button.");
+assert(files.html.includes('id="advancedCharges"'), "Manual charge editing should live behind the advanced charge control.");
+assert(files.html.includes('id="togglePreview"'), "Mobile workflow must include the preview toggle.");
 assert(files.html.includes('placeholder="July 2026"'), "Billing period placeholder should use month and year.");
 assert(files.html.includes("Connect Drive"), "Settings must include Connect Drive.");
 assert(files.html.includes("Download from Drive"), "Settings must include Download from Drive.");
@@ -54,7 +59,9 @@ assert(!files.html.includes('id="newInvoice"'), "Invoice editor must not include
 assert(!files.html.includes("Start new"), "Invoice editor must not include Start new copy.");
 
 assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
+assert(files.app.includes("async function createAllRentInvoices"), "app.js must define the rent batch flow.");
 assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js must define the utility batch flow.");
+assert(files.app.includes("function setPreviewVisible"), "app.js must define mobile preview visibility handling.");
 assert(files.app.includes("function setInvoicePaid"), "Saved invoices must support mark-paid/reopen actions.");
 assert(files.app.includes("function utilityCalculationForTenant"), "Utility billing should preserve shared bill totals when switching tenants.");
 assert(files.app.includes("function invoiceNumberPeriodDate"), "Generated invoice numbers must use the invoice billing month.");
@@ -66,10 +73,13 @@ assert(files.serviceWorker.includes("async function networkFirst"), "sw.js shoul
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
+assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
 assert(files.readme.includes("RNT-2026-07-"), "README must document month-coded rent invoice numbers.");
 assert(files.readme.includes("UTL-2026-06-"), "README must document month-coded utility invoice numbers.");
 assert(files.readme.includes("Invoice States"), "README must document invoice states.");
+assert(files.readme.includes("Saved locally"), "README must document the saved-local state.");
+assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
 
 if (failures.length) {
   console.error("Static validation failed:");

@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v24";
+  const APP_VERSION = "rent-ledger-v25";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -51,6 +51,7 @@
   let selectedInvoiceId = "";
   let tenantEditorId = selectedTenantId;
   let draft = createBlankInvoice(selectedTenantId);
+  let cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
   let currentWorkflow = normalizeInvoiceType(draft.invoiceType) === "utility" ? "utility" : "rent";
   let toastTimer = 0;
   let driveAccessToken = "";
@@ -94,6 +95,23 @@
       "utilityBatchSummary",
       "applyUtilityCharge",
       "batchUtilityInvoices",
+      "rentBatchPanel",
+      "rentBatchHeading",
+      "rentBatchCopy",
+      "rentBatchList",
+      "createAllRentInvoices",
+      "utilityBatchPanel",
+      "utilityBatchHeading",
+      "utilityBatchCopy",
+      "cycleUtilityMethod",
+      "cycleUtilityTotalUnits",
+      "cycleUtilityElectric",
+      "cycleUtilityWaterSewer",
+      "cycleUtilityGas",
+      "cycleUtilityOther",
+      "utilityAllocationList",
+      "createAllUtilityInvoices",
+      "advancedCharges",
       "lineItems",
       "previousBalance",
       "credits",
@@ -116,6 +134,8 @@
       "overviewInvoiceList",
       "startRentWorkflow",
       "startUtilityWorkflow",
+      "reviewInvoicesWorkflow",
+      "invoiceWorkflowCount",
       "workflowEyebrow",
       "workflowCopy",
       "saveState",
@@ -123,6 +143,7 @@
       "addLineItem",
       "saveInvoice",
       "printInvoice",
+      "togglePreview",
       "clearPaid",
       "tenantList",
       "addTenant",
@@ -184,6 +205,7 @@
     });
     els.startRentWorkflow.addEventListener("click", () => setView("rent"));
     els.startUtilityWorkflow.addEventListener("click", () => setView("utility"));
+    els.reviewInvoicesWorkflow.addEventListener("click", () => setView("invoices"));
     els.enterApp.addEventListener("click", dismissSplash);
 
     els.tenantSelect.addEventListener("change", () => {
@@ -237,7 +259,29 @@
       renderOverview();
       markDirty();
     });
-    els.batchUtilityInvoices.addEventListener("click", batchCreateUtilityInvoices);
+    if (els.batchUtilityInvoices) els.batchUtilityInvoices.addEventListener("click", batchCreateUtilityInvoices);
+    els.createAllUtilityInvoices.addEventListener("click", batchCreateUtilityInvoices);
+    [
+      els.cycleUtilityMethod,
+      els.cycleUtilityTotalUnits,
+      els.cycleUtilityElectric,
+      els.cycleUtilityWaterSewer,
+      els.cycleUtilityGas,
+      els.cycleUtilityOther,
+    ].forEach((input) => {
+      input.addEventListener("input", () => {
+        cycleUtilityCalculation = readCycleUtilityCalculation();
+        draft.utilityCalculation = utilityCalculationForTenant(getTenant(draft.tenantId), cycleUtilityCalculation);
+        fillUtilityCalculationForm(draft.utilityCalculation);
+        renderUtilityCalculation();
+        renderUtilityBatchPanel();
+        renderInvoicePreview();
+        renderTotals();
+      });
+    });
+    els.rentBatchList.addEventListener("click", handleCycleActionClick);
+    els.utilityAllocationList.addEventListener("click", handleCycleActionClick);
+    els.createAllRentInvoices.addEventListener("click", createAllRentInvoices);
 
     els.applyRentCharge.addEventListener("click", () => {
       syncDraftFromForm();
@@ -305,6 +349,7 @@
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.printInvoice.addEventListener("click", () => window.print());
+    els.togglePreview.addEventListener("click", togglePreview);
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
     els.overviewInvoiceList.addEventListener("click", handleInvoiceHistoryClick);
@@ -318,6 +363,7 @@
     renderInvoiceEditor();
     renderInvoicePreview();
     renderInvoiceHistory();
+    renderWorkflowPanels();
     renderOverview();
     renderTenants();
     renderMetrics();
@@ -343,6 +389,10 @@
       view.classList.toggle("is-active", view.id === activeViewId);
     });
     if (options.replaceHash !== false) window.location.hash = nextView;
+    if (workflowType) {
+      renderWorkflowPanels();
+      setPreviewVisible(false);
+    }
     if (nextView === "overview") renderOverview();
     window.scrollTo({ top: 0, behavior: options.instant ? "auto" : "smooth" });
   }
@@ -372,6 +422,7 @@
     }
     renderInvoiceEditor();
     renderInvoicePreview();
+    renderWorkflowPanels();
   }
 
   function renderSplash() {
@@ -385,6 +436,23 @@
   function dismissSplash() {
     sessionStorage.setItem(SPLASH_SEEN_KEY, "true");
     els.splashScreen.hidden = true;
+  }
+
+  function togglePreview() {
+    const previewPanel = document.querySelector(".preview-panel");
+    setPreviewVisible(!previewPanel?.classList.contains("is-preview-visible"));
+    if (previewPanel?.classList.contains("is-preview-visible")) {
+      previewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function setPreviewVisible(visible) {
+    const previewPanel = document.querySelector(".preview-panel");
+    if (!previewPanel) return;
+    previewPanel.classList.toggle("is-preview-visible", Boolean(visible));
+    if (els.togglePreview) {
+      els.togglePreview.textContent = visible ? "Hide preview" : "Preview";
+    }
   }
 
   function renderTenantOptions() {
@@ -447,7 +515,7 @@
     els.invoiceNotes.value = draft.notes;
     els.applyRentCharge.hidden = normalizeInvoiceType(draft.invoiceType) !== "rent";
     els.invoiceStatus.textContent = invoiceStatusLabel();
-    els.saveState.textContent = selectedInvoiceId ? "Saved" : "Not saved";
+    els.saveState.textContent = invoiceStatusLabel();
     renderLineItems();
     renderUtilityCalculation();
     renderTotals();
@@ -455,7 +523,7 @@
 
   function invoiceStatusLabel() {
     if (draft.status === "paid") return "Paid";
-    return selectedInvoiceId ? "Saved" : "Not saved";
+    return selectedInvoiceId ? "Saved locally" : "Draft";
   }
 
   function renderWorkflowHeader(invoiceType) {
@@ -684,13 +752,15 @@
   }
 
   async function batchCreateUtilityInvoices() {
-    syncDraftFromForm();
+    cycleUtilityCalculation = readCycleUtilityCalculation();
+    draft.utilityCalculation = utilityCalculationForTenant(getTenant(draft.tenantId), cycleUtilityCalculation);
+    fillUtilityCalculationForm(draft.utilityCalculation);
     if (!invoiceAllowsUtility(draft.invoiceType)) {
       showToast("Open the utility workflow first.");
       return;
     }
 
-    const baseCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+    const baseCalculation = normalizeUtilityCalculation(cycleUtilityCalculation);
     const baseDetails = utilityCalculationDetails(baseCalculation);
     if (!baseDetails.hasTotal || baseCalculation.totalUnits <= 0) {
       showToast("Enter utility bills and total units first.");
@@ -709,33 +779,7 @@
     );
     if (!confirmed) return;
 
-    const createdInvoices = [];
-    tenants.forEach((tenant) => {
-      const invoice = createBlankInvoice(tenant.id, "utility");
-      const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
-      const tenantDetails = utilityCalculationDetails(tenantCalculation);
-      if (!tenantDetails.hasTotal || tenantDetails.share <= 0) return;
-
-      invoice.id = cryptoId();
-      invoice.issueDate = draft.issueDate || invoice.issueDate;
-      invoice.dueDate = summary.dueDate;
-      invoice.billingPeriod = summary.utilityPeriod;
-      invoice.utilityCalculation = tenantCalculation;
-      invoice.notes = draft.notes || "";
-      invoice.paymentInstructions = draft.paymentInstructions || state.landlord.paymentInstructions;
-      invoice.lineItems = [
-        {
-          type: "Utility",
-          description: utilityLineDescription(tenantCalculation),
-          amount: tenantDetails.share,
-          generatedUtility: true,
-        },
-      ];
-      invoice.status = "open";
-      invoice.updatedAt = new Date().toISOString();
-      state.invoices.push(invoice);
-      createdInvoices.push(invoice);
-    });
+    const createdInvoices = tenants.map((tenant) => createUtilityInvoiceForTenant(tenant.id, baseCalculation)).filter(Boolean);
 
     if (!createdInvoices.length) {
       showToast("No utility invoices were created. Check each tenant's utility units.");
@@ -748,8 +792,9 @@
     currentWorkflow = "utility";
     saveState(`Created ${createdInvoices.length} utility invoices`);
     renderAll();
-    setView("invoices", { preserveDraft: true });
-    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices);
+    setView("utility", { preserveDraft: true });
+    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving utility invoices");
+    setSavedStateLabel(driveSaved);
     showToast(
       driveSaved
         ? `Created ${createdInvoices.length} utility invoices and uploaded PDFs.`
@@ -948,6 +993,311 @@
     };
   }
 
+  function renderWorkflowPanels() {
+    if (!els.rentBatchPanel || !els.utilityBatchPanel) return;
+    const summary = currentCycleSummary();
+    const isRentWorkflow = currentWorkflow !== "utility";
+    els.rentBatchPanel.hidden = !isRentWorkflow;
+    els.utilityBatchPanel.hidden = isRentWorkflow;
+
+    if (isRentWorkflow) {
+      renderRentBatchPanel(summary);
+    } else {
+      fillCycleUtilityCalculationForm(cycleUtilityCalculation);
+      renderUtilityBatchPanel(summary);
+    }
+  }
+
+  function renderRentBatchPanel(summary = currentCycleSummary()) {
+    els.rentBatchHeading.textContent = `${summary.period} Rent`;
+    els.rentBatchCopy.textContent = `${summary.missingRent.length} active tenant${
+      summary.missingRent.length === 1 ? "" : "s"
+    } still need rent invoices due ${formatDate(summary.dueDate)}.`;
+    els.createAllRentInvoices.disabled = summary.missingRent.length === 0;
+    els.rentBatchList.innerHTML = getActiveTenants().length
+      ? getActiveTenants().map((tenant) => renderRentCycleRow(tenant, summary)).join("")
+      : `<div class="empty-state">No active tenants are available for rent billing.</div>`;
+  }
+
+  function renderRentCycleRow(tenant, summary) {
+    const invoice = currentRentInvoiceForTenant(tenant.id, summary);
+    const status = invoice ? invoiceStatusText(invoice) : "Not created";
+    const detail = `${formatMoney(tenant.rent || 0)} monthly rent`;
+    return renderCycleRow({
+      tenant,
+      title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
+      detail,
+      status,
+      amount: formatMoney(tenant.rent || 0),
+      invoice,
+      createAction: `data-create-rent-invoice="${escapeAttr(tenant.id)}"`,
+      createLabel: "Create",
+    });
+  }
+
+  function renderUtilityBatchPanel(summary = currentCycleSummary()) {
+    const details = utilityCalculationDetails(cycleUtilityCalculation);
+    els.utilityBatchHeading.textContent = `${summary.utilityPeriod} Utilities`;
+    els.utilityBatchCopy.textContent = `Rent cycle due ${formatDate(summary.dueDate)}. ${
+      details.hasTotal ? `Total utility bills: ${formatMoney(details.totalCharges)}.` : "Enter utility bills to calculate tenant shares."
+    }`;
+    els.createAllUtilityInvoices.disabled =
+      summary.missingUtilities.length === 0 || !details.hasTotal || cycleUtilityCalculation.totalUnits <= 0;
+    renderUtilityAllocationList(summary);
+  }
+
+  function renderUtilityAllocationList(summary = currentCycleSummary()) {
+    const tenants = getUtilityBillableTenants();
+    if (!tenants.length) {
+      els.utilityAllocationList.innerHTML = `<div class="empty-state">No active tenants are billable for utilities.</div>`;
+      return;
+    }
+    els.utilityAllocationList.innerHTML = tenants.map((tenant) => renderUtilityAllocationRow(tenant, summary)).join("");
+  }
+
+  function renderUtilityAllocationRow(tenant, summary) {
+    const invoice = currentUtilityInvoiceForTenant(tenant.id, summary);
+    const calculation = utilityCalculationForTenant(tenant, cycleUtilityCalculation);
+    const details = utilityCalculationDetails(calculation);
+    const status = invoice ? invoiceStatusText(invoice) : "Not created";
+    const amount = details.hasTotal && details.share > 0 ? formatMoney(details.share) : "$0.00";
+    const detail =
+      calculation.method === "equalSplit"
+        ? `${formatNumber(calculation.totalUnits)} shares`
+        : `${formatNumber(calculation.tenantUnits)} of ${formatNumber(calculation.totalUnits)} occupancy units`;
+    return renderCycleRow({
+      tenant,
+      title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
+      detail,
+      status,
+      amount,
+      invoice,
+      createAction: `data-create-utility-invoice="${escapeAttr(tenant.id)}"`,
+      createLabel: "Create",
+      createDisabled: !details.hasTotal || details.share <= 0,
+    });
+  }
+
+  function renderCycleRow({ tenant, title, detail, status, amount, invoice, createAction, createLabel, createDisabled = false }) {
+    const actions = invoice
+      ? `
+          <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+          <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
+          invoice.status === "paid" ? "false" : "true"
+        }" type="button">${invoice.status === "paid" ? "Reopen" : "Mark paid"}</button>`
+      : `<button class="small-button" ${createAction} ${createDisabled ? "disabled" : ""} type="button">${createLabel}</button>`;
+    return `
+      <article class="cycle-row">
+        <div>
+          <h3>${escapeHtml(title || tenant.name || "Tenant")}</h3>
+          <p>${escapeHtml(detail)} &middot; ${escapeHtml(status)}</p>
+        </div>
+        <strong>${escapeHtml(amount)}</strong>
+        <div class="card-actions">${actions}</div>
+      </article>`;
+  }
+
+  function currentRentInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
+    return summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesRent(invoice));
+  }
+
+  function currentUtilityInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
+    return summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesUtility(invoice));
+  }
+
+  function invoiceStatusText(invoice) {
+    return invoice.status === "paid" ? "Paid" : "Open";
+  }
+
+  function fillCycleUtilityCalculationForm(calculation) {
+    const current = normalizeUtilityCalculation(calculation);
+    els.cycleUtilityMethod.value = current.method;
+    els.cycleUtilityTotalUnits.value = normalizeNumberInput(current.totalUnits);
+    els.cycleUtilityElectric.value = normalizeNumberInput(current.electric);
+    els.cycleUtilityWaterSewer.value = normalizeNumberInput(current.waterSewer);
+    els.cycleUtilityGas.value = normalizeNumberInput(current.gas);
+    els.cycleUtilityOther.value = normalizeNumberInput(current.other);
+  }
+
+  function readCycleUtilityCalculation() {
+    return {
+      method: els.cycleUtilityMethod.value || "occupancyUnits",
+      tenantUnits: toNumber(draft.utilityCalculation?.tenantUnits),
+      totalUnits: toNumber(els.cycleUtilityTotalUnits.value),
+      electric: toNumber(els.cycleUtilityElectric.value),
+      waterSewer: toNumber(els.cycleUtilityWaterSewer.value),
+      gas: toNumber(els.cycleUtilityGas.value),
+      other: toNumber(els.cycleUtilityOther.value),
+    };
+  }
+
+  async function handleCycleActionClick(event) {
+    const paidButton = event.target.closest("[data-toggle-paid-invoice]");
+    const loadButton = event.target.closest("[data-load-invoice]");
+    const rentButton = event.target.closest("[data-create-rent-invoice]");
+    const utilityButton = event.target.closest("[data-create-utility-invoice]");
+
+    if (paidButton || loadButton) {
+      handleInvoiceHistoryClick(event);
+      return;
+    }
+
+    if (rentButton) {
+      const invoice = createRentInvoiceForTenant(rentButton.dataset.createRentInvoice);
+      if (!invoice) return;
+      selectedInvoiceId = invoice.id;
+      selectedTenantId = invoice.tenantId;
+      draft = clone(invoice);
+      currentWorkflow = "rent";
+      saveState("Created rent invoice");
+      renderAll();
+      setView("rent", { preserveDraft: true });
+      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+      setSavedStateLabel(driveSaved);
+      showToast(driveSaved ? "Rent invoice saved to browser and Drive." : "Rent invoice saved locally. Drive save skipped.");
+      return;
+    }
+
+    if (utilityButton) {
+      cycleUtilityCalculation = readCycleUtilityCalculation();
+      const invoice = createUtilityInvoiceForTenant(utilityButton.dataset.createUtilityInvoice, cycleUtilityCalculation);
+      if (!invoice) return;
+      selectedInvoiceId = invoice.id;
+      selectedTenantId = invoice.tenantId;
+      draft = clone(invoice);
+      currentWorkflow = "utility";
+      saveState("Created utility invoice");
+      renderAll();
+      setView("utility", { preserveDraft: true });
+      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+      setSavedStateLabel(driveSaved);
+      showToast(
+        driveSaved ? "Utility invoice saved to browser and Drive." : "Utility invoice saved locally. Drive save skipped."
+      );
+    }
+  }
+
+  async function createAllRentInvoices() {
+    const summary = currentCycleSummary();
+    const tenants = summary.missingRent;
+    if (!tenants.length) {
+      showToast(`${summary.period} rent invoices are already complete.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Create ${tenants.length} rent invoice${tenants.length === 1 ? "" : "s"} for ${summary.period}?`
+    );
+    if (!confirmed) return;
+
+    const createdInvoices = tenants.map((tenant) => createRentInvoiceForTenant(tenant.id)).filter(Boolean);
+    if (!createdInvoices.length) {
+      showToast("No rent invoices were created.");
+      return;
+    }
+
+    selectedInvoiceId = createdInvoices[0].id;
+    selectedTenantId = createdInvoices[0].tenantId;
+    draft = clone(createdInvoices[0]);
+    currentWorkflow = "rent";
+    saveState(`Created ${createdInvoices.length} rent invoices`);
+    renderAll();
+    setView("rent", { preserveDraft: true });
+    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving rent invoices");
+    setSavedStateLabel(driveSaved);
+    showToast(
+      driveSaved
+        ? `Created ${createdInvoices.length} rent invoices and uploaded PDFs.`
+        : `Created ${createdInvoices.length} rent invoices locally. Drive save skipped.`
+    );
+  }
+
+  function createRentInvoiceForTenant(tenantId) {
+    const summary = currentCycleSummary();
+    const tenant = getTenant(tenantId);
+    if (!tenant || tenant.active === false) {
+      showToast("Choose an active tenant before creating a rent invoice.");
+      return null;
+    }
+    const existing = currentRentInvoiceForTenant(tenant.id, summary);
+    if (existing) {
+      openInvoiceById(existing.id, { message: "Rent invoice already exists." });
+      return null;
+    }
+
+    const invoice = createBlankInvoice(tenant.id, "rent");
+    invoice.id = cryptoId();
+    invoice.dueDate = summary.dueDate;
+    invoice.billingPeriod = summary.period;
+    invoice.lineItems = rentLineItems(tenant);
+    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "rent" ? draft.notes || "" : "";
+    invoice.paymentInstructions = state.landlord.paymentInstructions;
+    invoice.status = "open";
+    invoice.updatedAt = new Date().toISOString();
+    state.invoices.push(invoice);
+    return invoice;
+  }
+
+  function createUtilityInvoiceForTenant(tenantId, baseCalculation = cycleUtilityCalculation) {
+    const summary = currentCycleSummary();
+    const tenant = getTenant(tenantId);
+    if (!tenant || !isUtilityBillableTenant(tenant)) {
+      showToast("Choose a utility-billable tenant before creating a utility invoice.");
+      return null;
+    }
+    const existing = currentUtilityInvoiceForTenant(tenant.id, summary);
+    if (existing) {
+      openInvoiceById(existing.id, { message: "Utility invoice already exists." });
+      return null;
+    }
+
+    const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
+    const tenantDetails = utilityCalculationDetails(tenantCalculation);
+    if (!tenantDetails.hasTotal || tenantDetails.share <= 0) {
+      showToast("Enter utility bills and allocation units first.");
+      return null;
+    }
+
+    const invoice = createBlankInvoice(tenant.id, "utility");
+    invoice.id = cryptoId();
+    invoice.dueDate = summary.dueDate;
+    invoice.billingPeriod = summary.utilityPeriod;
+    invoice.utilityCalculation = tenantCalculation;
+    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "utility" ? draft.notes || "" : "";
+    invoice.paymentInstructions = state.landlord.paymentInstructions;
+    invoice.lineItems = [
+      {
+        type: "Utility",
+        description: utilityLineDescription(tenantCalculation),
+        amount: tenantDetails.share,
+        generatedUtility: true,
+      },
+    ];
+    invoice.status = "open";
+    invoice.updatedAt = new Date().toISOString();
+    state.invoices.push(invoice);
+    return invoice;
+  }
+
+  function openInvoiceById(invoiceId, options = {}) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return false;
+    selectedInvoiceId = invoice.id;
+    selectedTenantId = invoice.tenantId;
+    draft = clone(invoice);
+    currentWorkflow = normalizeInvoiceType(invoice.invoiceType) === "utility" ? "utility" : "rent";
+    if (currentWorkflow === "utility") {
+      cycleUtilityCalculation = normalizeUtilityCalculation(invoice.utilityCalculation);
+    }
+    renderAll();
+    setView(currentWorkflow, { preserveDraft: true });
+    if (options.scrollToEditor) {
+      document.querySelector(".editor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    showToast(options.message || "Invoice opened.");
+    return true;
+  }
+
   function renderMetrics() {
     const openInvoices = state.invoices.filter((invoice) => invoice.status !== "paid");
     const paidInvoices = state.invoices.filter((invoice) => invoice.status === "paid");
@@ -969,6 +1319,7 @@
     els.cycleOpenBalance.textContent = formatMoney(summary.openBalance);
     els.rentWorkflowCount.textContent = `${summary.missingRent.length} remaining`;
     els.utilityWorkflowCount.textContent = `${summary.missingUtilities.length} remaining`;
+    els.invoiceWorkflowCount.textContent = `${summary.cycleInvoices.length} saved this cycle`;
     els.cycleMissingRent.innerHTML = overviewTenantList(summary.missingRent, "Rent is complete for active tenants.");
     els.cycleMissingUtilities.innerHTML = overviewTenantList(
       summary.missingUtilities,
@@ -1028,12 +1379,16 @@
 
   function invoiceIncludesRent(invoice) {
     const type = normalizeInvoiceType(invoice.invoiceType);
-    return type === "rent" || type === "combined" || (invoice.lineItems || []).some((item) => item.type === "Rent");
+    if (type === "rent" || type === "combined") return true;
+    if (type === "utility") return false;
+    return (invoice.lineItems || []).some((item) => item.type === "Rent");
   }
 
   function invoiceIncludesUtility(invoice) {
     const type = normalizeInvoiceType(invoice.invoiceType);
-    return type === "utility" || type === "combined" || (invoice.lineItems || []).some((item) => item.type !== "Rent");
+    if (type === "utility" || type === "combined") return true;
+    if (type === "rent") return false;
+    return (invoice.lineItems || []).some((item) => item.type !== "Rent");
   }
 
   function invoiceCategoryTotal(invoice, category) {
@@ -1093,6 +1448,7 @@
     if (!invoice) return;
     renderAll();
     const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+    setSavedStateLabel(driveSaved);
     showToast(driveSaved ? "Invoice saved to browser and Drive." : "Invoice saved locally. Drive save skipped.");
   }
 
@@ -1135,6 +1491,9 @@
     const tenantId = canKeepTenant ? selectedTenantId : fallbackTenantId;
     selectedTenantId = tenantId || "";
     draft = createBlankInvoice(selectedTenantId, nextType);
+    if (nextType === "utility") {
+      draft.utilityCalculation = utilityCalculationForTenant(getTenant(selectedTenantId), cycleUtilityCalculation);
+    }
     renderInvoiceEditor();
     renderInvoicePreview();
     renderOverview();
@@ -1165,17 +1524,8 @@
     }
 
     if (loadButton) {
-      const invoice = state.invoices.find((item) => item.id === loadButton.dataset.loadInvoice);
-      if (!invoice) return;
-      selectedInvoiceId = invoice.id;
-      selectedTenantId = invoice.tenantId;
-      draft = clone(invoice);
-      currentWorkflow = normalizeInvoiceType(invoice.invoiceType) === "utility" ? "utility" : "rent";
-      renderInvoiceEditor();
-      renderInvoicePreview();
-      setView(currentWorkflow, { preserveDraft: true });
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      showToast("Invoice opened.");
+      openInvoiceById(loadButton.dataset.loadInvoice);
+      return;
     }
 
     if (deleteButton) {
@@ -1592,10 +1942,17 @@
   }
 
   function markDirty() {
-    els.saveState.textContent = selectedInvoiceId ? "Unsaved changes" : "Not saved";
+    els.saveState.textContent = selectedInvoiceId ? "Unsaved changes" : "Draft";
     if (draft.status !== "paid") {
-      els.invoiceStatus.textContent = selectedInvoiceId ? "Unsaved changes" : "Not saved";
+      els.invoiceStatus.textContent = selectedInvoiceId ? "Unsaved changes" : "Draft";
     }
+  }
+
+  function setSavedStateLabel(driveSaved) {
+    if (!els.invoiceStatus || !els.saveState) return;
+    const label = draft.status === "paid" ? "Paid" : driveSaved ? "Saved to Drive" : "Saved locally";
+    els.invoiceStatus.textContent = label;
+    els.saveState.textContent = label;
   }
 
   function loadState() {
@@ -1798,7 +2155,7 @@
     }
   }
 
-  async function saveBatchInvoiceArtifactsToDrive(invoices) {
+  async function saveBatchInvoiceArtifactsToDrive(invoices, actionLabel = "saving invoices") {
     saveDriveSettings(false);
     if (!invoices.length) return false;
     if (!appSettings.googleClientId) {
@@ -1811,8 +2168,8 @@
     }
 
     try {
-      if (!(await ensureDriveAccess("saving utility invoices"))) return false;
-      renderDriveStatus("Uploading app data and utility PDFs to Drive...");
+      if (!(await ensureDriveAccess(actionLabel))) return false;
+      renderDriveStatus("Uploading app data and invoice PDFs to Drive...");
       await uploadDriveState();
       for (const invoice of invoices) {
         await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
@@ -1852,6 +2209,7 @@
       selectedTenantId = firstActiveTenantId() || "";
       selectedInvoiceId = "";
       draft = createBlankInvoice(selectedTenantId);
+      cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
       saveState("Loaded from Google Drive");
       fillLandlordForm();
       fillTenantForm(selectedTenantId);
@@ -2523,6 +2881,7 @@
     selectedTenantId = firstActiveTenantId() || "";
     selectedInvoiceId = "";
     draft = createBlankInvoice(selectedTenantId);
+    cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
     saveState("Restored local backup");
     fillLandlordForm();
     fillTenantForm(selectedTenantId);
