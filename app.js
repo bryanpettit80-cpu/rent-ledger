@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v14";
+  const APP_VERSION = "rent-ledger-v15";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const DEFAULT_GOOGLE_CLIENT_ID =
@@ -71,7 +71,6 @@
     fillTenantForm(selectedTenantId);
     renderAll();
     registerServiceWorker();
-    autoReconnectDrive();
   }
 
   function bindElements() {
@@ -947,9 +946,10 @@
     const hasClientId = Boolean(appSettings.googleClientId);
     const hasValidClientId = isValidGoogleClientId(appSettings.googleClientId);
     const connected = Boolean(driveAccessToken);
+    const driveActionReady = connected || (hasValidClientId && appSettings.driveRemembered);
     els.connectDrive.disabled = !hasValidClientId;
-    els.loadDriveState.disabled = !connected;
-    els.saveDriveState.disabled = !connected;
+    els.loadDriveState.disabled = !driveActionReady;
+    els.saveDriveState.disabled = !driveActionReady;
     if (message) {
       els.driveStatus.textContent = message;
     } else if (!hasClientId) {
@@ -959,7 +959,7 @@
     } else if (connected) {
       els.driveStatus.textContent = appSettings.driveAutoSync ? "Connected. Auto-sync on." : "Connected. Auto-sync off.";
     } else if (appSettings.driveRemembered) {
-      els.driveStatus.textContent = "Drive remembered. Reconnecting...";
+      els.driveStatus.textContent = "Drive remembered. Ready when needed.";
     } else {
       els.driveStatus.textContent = "Ready to connect.";
     }
@@ -1252,7 +1252,7 @@
 
     try {
       renderDriveStatus("Connecting to Google Drive...");
-      await requestDriveAccessToken("consent");
+      await requestDriveAccessToken(appSettings.driveRemembered ? "" : "consent");
       rememberDriveConnection();
       renderDriveStatus();
       showToast("Google Drive connected.");
@@ -1267,31 +1267,42 @@
     }
   }
 
-  async function autoReconnectDrive() {
-    if (!appSettings.driveRemembered || driveAccessToken) return;
-    if (!isValidGoogleClientId(appSettings.googleClientId)) return;
-
-    try {
-      renderDriveStatus("Reconnecting to Google Drive...");
-      await requestDriveAccessToken("");
-      rememberDriveConnection();
-      renderDriveStatus();
-    } catch (error) {
-      console.warn("Silent Google Drive reconnect failed.", error);
-      driveAccessToken = "";
-      renderDriveStatus("Drive remembered. Click Connect Drive to reconnect.");
-    }
-  }
-
   function rememberDriveConnection() {
     appSettings.driveRemembered = true;
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
   }
 
+  async function ensureDriveAccess(actionLabel) {
+    if (driveAccessToken) return true;
+    if (!isValidGoogleClientId(appSettings.googleClientId)) {
+      renderDriveStatus("Use the full Web application OAuth client ID.");
+      showToast("Use the full OAuth client ID.");
+      return false;
+    }
+
+    try {
+      renderDriveStatus(`Connecting to Google Drive for ${actionLabel}...`);
+      await requestDriveAccessToken(appSettings.driveRemembered ? "" : "consent");
+      rememberDriveConnection();
+      renderDriveStatus();
+      return true;
+    } catch (error) {
+      console.error(error);
+      driveAccessToken = "";
+      renderDriveStatus("Google Drive authorization needed.");
+      showToast("Google Drive authorization needed.");
+      return false;
+    }
+  }
+
   function queueDriveSync(reason) {
     if (!appSettings.driveAutoSync) return;
     if (!driveAccessToken) {
-      renderDriveStatus("Connect Drive to sync changes.");
+      renderDriveStatus(
+        appSettings.driveRemembered
+          ? "Drive remembered. Use Save now to resume sync."
+          : "Connect Drive to sync changes."
+      );
       return;
     }
     clearTimeout(driveSyncTimer);
@@ -1304,11 +1315,7 @@
   }
 
   async function saveStateToDrive(reason = "Saved") {
-    if (!driveAccessToken) {
-      renderDriveStatus("Connect Drive before saving.");
-      showToast("Connect Google Drive first.");
-      return;
-    }
+    if (!(await ensureDriveAccess("saving"))) return;
 
     try {
       renderDriveStatus("Saving to Google Drive...");
@@ -1355,8 +1362,7 @@
 
     try {
       if (!driveAccessToken) {
-        renderDriveStatus("Connecting to Google Drive...");
-        await requestDriveAccessToken("consent");
+        if (!(await ensureDriveAccess("saving invoice PDF"))) return;
       }
       renderDriveStatus("Saving invoice PDF to Drive...");
       await uploadDriveState();
@@ -1372,15 +1378,11 @@
   }
 
   async function loadStateFromDrive() {
-    if (!driveAccessToken) {
-      renderDriveStatus("Connect Drive before loading.");
-      showToast("Connect Google Drive first.");
-      return;
-    }
-
     if (!window.confirm("Load Rent Ledger data from Google Drive and replace this browser's local data?")) {
       return;
     }
+
+    if (!(await ensureDriveAccess("loading"))) return;
 
     try {
       renderDriveStatus("Loading from Google Drive...");

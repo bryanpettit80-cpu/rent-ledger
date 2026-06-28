@@ -193,9 +193,9 @@ The invoice screen also has `Save PDF to Drive`. That button saves the current i
 Rent Ledger/Invoices/
 ```
 
-After Drive has been connected once, the app remembers that connection and tries to reconnect silently after a refresh. It does not permanently store the Google access token; it only stores the connection preference and asks Google for a new short-lived token.
+After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 
-Browser security can still require a user sign-in/authorization step. If Google requires account selection, consent, or a fresh token, click `Connect Drive` before relying on auto-sync.
+When you click a Drive action such as `Save now`, `Load from Drive`, `Save PDF to Drive`, or `Connect Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
 
 Important:
 
