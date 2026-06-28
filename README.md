@@ -59,6 +59,18 @@ If the phone cannot connect, run `Start-Rent-Ledger-Mobile.cmd` as Administrator
 
 ## Invoice Workflow
 
+### Current Billing Cycle
+
+The app sets the current rent cycle automatically:
+
+- From the 1st through the 10th of a month, the current rent cycle is the current calendar month.
+- Beginning on the 11th, the current rent cycle moves to the next calendar month.
+- Rent invoices use the current rent cycle as the billing period.
+- Utility invoices use the immediately preceding rent cycle as the billing period.
+- Rent and utility invoices are due on the 1st day of the rent cycle month.
+
+Example: on June 28, 2026, the rent billing period is `July 2026`, the utility billing period is `June 2026`, and both invoices are due `July 1, 2026`.
+
 ### Rent Invoice
 
 Use `Rent invoice` for the monthly rent charge only.
@@ -142,6 +154,7 @@ Active tenants:
 
 - Appear in the invoice tenant selector.
 - Have an `Invoice` action in the tenant directory.
+- Can be excluded from utility billing while remaining active for rent invoices.
 
 Inactive tenants:
 

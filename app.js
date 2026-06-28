@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v16";
+  const APP_VERSION = "rent-ledger-v17";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -19,10 +19,6 @@
     style: "currency",
     currency: "USD",
   });
-
-  const today = new Date();
-  const sampleDueDate = new Date(today);
-  sampleDueDate.setDate(sampleDueDate.getDate() + 7);
 
   const defaultState = {
     landlord: {
@@ -143,6 +139,7 @@
       "tenantUtilityUnits",
       "tenantMemo",
       "tenantActive",
+      "tenantExcludeUtilities",
       "inactiveTenantList",
       "activeTenantCount",
       "inactiveTenantCount",
@@ -399,9 +396,12 @@
   }
 
   function renderTenantOptions() {
-    const activeTenants = getActiveTenants();
+    const activeTenants = selectableTenantsForCurrentWorkflow();
     if (!activeTenants.length) {
-      els.tenantSelect.innerHTML = `<option value="">Add an active tenant first</option>`;
+      els.tenantSelect.innerHTML =
+        currentWorkflow === "utility"
+          ? `<option value="">No utility-billable active tenants</option>`
+          : `<option value="">Add an active tenant first</option>`;
       selectedTenantId = "";
       return;
     }
@@ -775,12 +775,28 @@
     return state.tenants.filter((tenant) => tenant.active !== false);
   }
 
+  function getUtilityBillableTenants() {
+    return getActiveTenants().filter(isUtilityBillableTenant);
+  }
+
+  function isUtilityBillableTenant(tenant) {
+    return tenant?.active !== false && !tenant.excludeUtilities;
+  }
+
+  function selectableTenantsForCurrentWorkflow() {
+    return currentWorkflow === "utility" ? getUtilityBillableTenants() : getActiveTenants();
+  }
+
   function getInactiveTenants() {
     return state.tenants.filter((tenant) => tenant.active === false);
   }
 
   function firstActiveTenantId() {
     return getActiveTenants()[0]?.id || "";
+  }
+
+  function firstUtilityBillableTenantId() {
+    return getUtilityBillableTenants()[0]?.id || "";
   }
 
   function renderMetrics() {
@@ -796,7 +812,7 @@
   function renderOverview() {
     if (!els.overviewCycleLabel) return;
     const summary = currentCycleSummary();
-    els.overviewCycleLabel.textContent = summary.period;
+    els.overviewCycleLabel.textContent = `Rent: ${summary.period} | Utilities: ${summary.utilityPeriod} | Due ${formatDate(summary.dueDate)}`;
     els.overviewCycleStatus.textContent = summary.openInvoices ? `${summary.openInvoices} open` : "Clear";
     els.cycleExpectedRent.textContent = formatMoney(summary.expectedRent);
     els.cycleRentInvoiced.textContent = formatMoney(summary.rentInvoiced);
@@ -813,18 +829,24 @@
   }
 
   function currentCycleSummary() {
-    const period = draft.billingPeriod || monthLabel(new Date());
+    const rentCycleDate = currentRentCycleDate();
+    const period = monthLabel(rentCycleDate);
+    const utilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
+    const dueDate = toDateInput(firstDayOfMonth(rentCycleDate));
     const activeTenants = getActiveTenants();
-    const cycleInvoices = state.invoices.filter((invoice) => sameCycle(invoice.billingPeriod, period));
+    const utilityBillableTenants = getUtilityBillableTenants();
+    const cycleInvoices = state.invoices.filter((invoice) => isCurrentCycleInvoice(invoice, period, utilityPeriod));
     const missingRent = activeTenants.filter((tenant) => {
       return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesRent(invoice));
     });
-    const missingUtilities = activeTenants.filter((tenant) => {
+    const missingUtilities = utilityBillableTenants.filter((tenant) => {
       return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesUtility(invoice));
     });
 
     return {
       period,
+      utilityPeriod,
+      dueDate,
       cycleInvoices,
       expectedRent: activeTenants.reduce((total, tenant) => total + toNumber(tenant.rent), 0),
       rentInvoiced: cycleInvoices.reduce((total, invoice) => total + invoiceCategoryTotal(invoice, "rent"), 0),
@@ -840,6 +862,12 @@
 
   function sameCycle(invoicePeriod, currentPeriod) {
     return normalizeCycleLabel(invoicePeriod) === normalizeCycleLabel(currentPeriod);
+  }
+
+  function isCurrentCycleInvoice(invoice, rentPeriod, utilityPeriod) {
+    if (invoiceIncludesUtility(invoice) && sameCycle(invoice.billingPeriod, utilityPeriod)) return true;
+    if (invoiceIncludesRent(invoice) && sameCycle(invoice.billingPeriod, rentPeriod)) return true;
+    return false;
   }
 
   function normalizeCycleLabel(value) {
@@ -942,7 +970,13 @@
     selectedInvoiceId = "";
     const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
     currentWorkflow = nextType;
-    const tenantId = getTenant(selectedTenantId)?.active === false ? firstActiveTenantId() : selectedTenantId || firstActiveTenantId();
+    const currentTenant = getTenant(selectedTenantId);
+    const fallbackTenantId = nextType === "utility" ? firstUtilityBillableTenantId() : firstActiveTenantId();
+    const canKeepTenant =
+      currentTenant &&
+      currentTenant.active !== false &&
+      (nextType !== "utility" || isUtilityBillableTenant(currentTenant));
+    const tenantId = canKeepTenant ? selectedTenantId : fallbackTenantId;
     selectedTenantId = tenantId || "";
     draft = createBlankInvoice(selectedTenantId, nextType);
     renderInvoiceEditor();
@@ -1027,6 +1061,7 @@
       rent: toNumber(els.tenantRent.value),
       utilityUnits: toNumber(els.tenantUtilityUnits.value),
       active: els.tenantActive.checked,
+      excludeUtilities: els.tenantExcludeUtilities.checked,
       payments: existingTenant?.payments || [],
       memo: els.tenantMemo.value.trim(),
     };
@@ -1070,6 +1105,7 @@
       rent: "",
       utilityUnits: 1,
       active: true,
+      excludeUtilities: false,
       memo: "",
     };
     tenantEditorId = tenant.id;
@@ -1083,6 +1119,7 @@
     els.tenantUtilityUnits.value = normalizeNumberInput(tenant.utilityUnits || 1);
     els.tenantMemo.value = tenant.memo || "";
     els.tenantActive.checked = tenant.active !== false;
+    els.tenantExcludeUtilities.checked = Boolean(tenant.excludeUtilities);
     els.tenantFormHeading.textContent = tenant.id ? "Tenant Profile" : "New Tenant";
     els.deleteTenant.disabled = !tenant.id;
   }
@@ -1232,7 +1269,8 @@
     const tenant = getTenant(tenantId);
     const normalizedType = normalizeInvoiceType(invoiceType);
     const issueDate = toDateInput(new Date());
-    const dueDate = toDateInput(addDays(new Date(), 7));
+    const rentCycleDate = currentRentCycleDate();
+    const dueDate = toDateInput(firstDayOfMonth(rentCycleDate));
     const invoiceNumber = nextInvoiceNumber(normalizedType);
     return {
       id: "",
@@ -1241,7 +1279,7 @@
       invoiceNumber,
       issueDate,
       dueDate,
-      billingPeriod: monthLabel(new Date()),
+      billingPeriod: billingPeriodForInvoiceType(normalizedType, rentCycleDate),
       lineItems: tenant ? defaultLineItems(tenant, normalizedType) : defaultLineItems(null, normalizedType),
       utilityCalculation: defaultUtilityCalculation(tenant),
       previousBalance: 0,
@@ -2185,7 +2223,7 @@
 
   function looksLikeTenantRecord(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-    return ["rent", "address", "payments", "active", "utilityUnits", "occupancyUnits"].some((key) =>
+    return ["rent", "address", "payments", "active", "utilityUnits", "occupancyUnits", "excludeUtilities"].some((key) =>
       Object.prototype.hasOwnProperty.call(value, key)
     );
   }
@@ -2194,6 +2232,7 @@
     if (!value || typeof value !== "object") return null;
     const tenantName = String(value.name || name || "").trim();
     if (!tenantName) return null;
+    const hasExcludeUtilities = Object.prototype.hasOwnProperty.call(value, "excludeUtilities");
     const payments = Array.isArray(value.payments) ? value.payments.map(normalizeImportedPayment).filter(Boolean) : [];
     return {
       id: value.id || cryptoId(),
@@ -2204,6 +2243,7 @@
       phone: formatPhoneNumber(value.phone),
       rent: toNumber(value.rent),
       utilityUnits: toNumber(value.utilityUnits || value.occupancyUnits || 1),
+      excludeUtilities: hasExcludeUtilities ? Boolean(value.excludeUtilities) : undefined,
       active: Object.prototype.hasOwnProperty.call(value, "active") ? Boolean(value.active) : true,
       payments,
       memo: importedTenantMemo(value, payments),
@@ -2244,6 +2284,8 @@
       if (indexByName.has(key)) {
         const index = indexByName.get(key);
         const existing = merged[index];
+        const hasImportedUtilityExclusion =
+          Object.prototype.hasOwnProperty.call(tenant, "excludeUtilities") && tenant.excludeUtilities !== undefined;
         merged[index] = {
           ...existing,
           ...tenant,
@@ -2251,6 +2293,7 @@
           email: tenant.email || existing.email || "",
           phone: tenant.phone || formatPhoneNumber(existing.phone) || "",
           unit: tenant.unit || existing.unit || "",
+          excludeUtilities: hasImportedUtilityExclusion ? tenant.excludeUtilities : Boolean(existing.excludeUtilities),
         };
       } else {
         indexByName.set(key, merged.length);
@@ -2349,6 +2392,7 @@
       ...tenant,
       phone: formatPhoneNumber(tenant?.phone),
       active: tenant?.active === false ? false : true,
+      excludeUtilities: Boolean(tenant?.excludeUtilities),
       utilityUnits: toNumber(tenant?.utilityUnits || 1),
       utilities: toNumber(tenant?.utilities),
     };
@@ -2505,15 +2549,28 @@
     }).format(date);
   }
 
+  function currentRentCycleDate(referenceDate = new Date()) {
+    const year = referenceDate.getFullYear();
+    const month = referenceDate.getMonth();
+    const cycleMonth = referenceDate.getDate() >= 11 ? month + 1 : month;
+    return new Date(year, cycleMonth, 1);
+  }
+
+  function previousMonthDate(date) {
+    return new Date(date.getFullYear(), date.getMonth() - 1, 1);
+  }
+
+  function firstDayOfMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+  }
+
+  function billingPeriodForInvoiceType(invoiceType, rentCycleDate = currentRentCycleDate()) {
+    return normalizeInvoiceType(invoiceType) === "utility" ? monthLabel(previousMonthDate(rentCycleDate)) : monthLabel(rentCycleDate);
+  }
+
   function formatMultiline(value) {
     const clean = escapeHtml(value || "");
     return clean.replace(/\n/g, "<br />");
-  }
-
-  function addDays(date, days) {
-    const copy = new Date(date);
-    copy.setDate(copy.getDate() + days);
-    return copy;
   }
 
   function toDateInput(date) {
