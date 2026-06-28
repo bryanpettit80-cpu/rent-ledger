@@ -2,9 +2,11 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v15";
+  const APP_VERSION = "rent-ledger-v16";
+  const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
+  const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
   const DEFAULT_GOOGLE_CLIENT_ID =
     "1053768686767-tjgtqui15pmh3q9blogtruftmo6lktfg.apps.googleusercontent.com";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -53,6 +55,7 @@
   let selectedInvoiceId = "";
   let tenantEditorId = selectedTenantId;
   let draft = createBlankInvoice(selectedTenantId);
+  let currentWorkflow = normalizeInvoiceType(draft.invoiceType) === "utility" ? "utility" : "rent";
   let toastTimer = 0;
   let driveAccessToken = "";
   let driveTokenClient = null;
@@ -71,6 +74,8 @@
     fillTenantForm(selectedTenantId);
     renderAll();
     registerServiceWorker();
+    setInitialView();
+    renderSplash();
   }
 
   function bindElements() {
@@ -99,6 +104,22 @@
       "invoicePreview",
       "invoiceHistory",
       "invoiceStatus",
+      "invoiceHeading",
+      "overviewCycleLabel",
+      "overviewCycleStatus",
+      "cycleExpectedRent",
+      "cycleRentInvoiced",
+      "cycleUtilityInvoiced",
+      "cycleOpenBalance",
+      "rentWorkflowCount",
+      "utilityWorkflowCount",
+      "cycleMissingRent",
+      "cycleMissingUtilities",
+      "overviewInvoiceList",
+      "startRentWorkflow",
+      "startUtilityWorkflow",
+      "workflowEyebrow",
+      "workflowCopy",
       "saveState",
       "addLineItem",
       "saveInvoice",
@@ -137,7 +158,6 @@
       "metricBalance",
       "metricPaid",
       "toast",
-      "exportBackup",
       "exportBackupSettings",
       "importBackup",
       "backupCount",
@@ -150,6 +170,10 @@
       "connectDrive",
       "loadDriveState",
       "saveDriveState",
+      "splashScreen",
+      "splashVersion",
+      "splashCommitDate",
+      "enterApp",
     ].forEach((id) => {
       els[id] = document.getElementById(id);
     });
@@ -159,6 +183,12 @@
     document.querySelectorAll(".nav-tab").forEach((button) => {
       button.addEventListener("click", () => setView(button.dataset.view));
     });
+    window.addEventListener("hashchange", () => {
+      setView(window.location.hash.replace("#", ""), { replaceHash: false, preserveDraft: true });
+    });
+    els.startRentWorkflow.addEventListener("click", () => setView("rent"));
+    els.startUtilityWorkflow.addEventListener("click", () => setView("utility"));
+    els.enterApp.addEventListener("click", dismissSplash);
 
     els.tenantSelect.addEventListener("change", () => {
       syncDraftFromForm();
@@ -171,6 +201,7 @@
       }
       renderInvoiceEditor();
       renderInvoicePreview();
+      renderOverview();
       markDirty();
     });
 
@@ -185,6 +216,7 @@
       }
       renderInvoiceEditor();
       renderInvoicePreview();
+      renderOverview();
       markDirty();
     });
 
@@ -209,6 +241,7 @@
         renderUtilityCalculation();
         renderInvoicePreview();
         renderTotals();
+        renderOverview();
         markDirty();
       });
     });
@@ -220,6 +253,7 @@
       renderUtilityCalculation();
       renderInvoicePreview();
       renderTotals();
+      renderOverview();
       markDirty();
     });
 
@@ -229,6 +263,7 @@
       renderLineItems();
       renderInvoicePreview();
       renderTotals();
+      renderOverview();
       markDirty();
     });
 
@@ -237,6 +272,7 @@
       syncDraftFromForm();
       renderInvoicePreview();
       renderTotals();
+      renderOverview();
       markDirty();
     });
 
@@ -280,13 +316,13 @@
     els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual sync"));
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
-    els.newInvoice.addEventListener("click", startNewInvoice);
+    els.newInvoice.addEventListener("click", () => startNewInvoice(currentWorkflow));
     els.markPaid.addEventListener("click", markInvoicePaid);
     els.printInvoice.addEventListener("click", () => window.print());
     els.saveInvoicePdfDrive.addEventListener("click", saveInvoicePdfToDrive);
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
-    els.exportBackup.addEventListener("click", exportBackup);
+    els.overviewInvoiceList.addEventListener("click", handleInvoiceHistoryClick);
     els.exportBackupSettings.addEventListener("click", exportBackup);
     els.importBackup.addEventListener("change", importBackup);
     els.restoreLatestBackup.addEventListener("click", restoreLatestBackup);
@@ -297,19 +333,69 @@
     renderInvoiceEditor();
     renderInvoicePreview();
     renderInvoiceHistory();
+    renderOverview();
     renderTenants();
     renderMetrics();
     renderBackupStatus();
   }
 
-  function setView(viewName) {
+  function setInitialView() {
+    const requestedView = normalizeViewName(window.location.hash.replace("#", ""));
+    setView(requestedView || "overview", { replaceHash: false, preserveDraft: true });
+  }
+
+  function setView(viewName, options = {}) {
+    const nextView = normalizeViewName(viewName);
+    const workflowType = invoiceWorkflowFromView(nextView);
+    if (workflowType) {
+      setInvoiceWorkflow(workflowType, options);
+    }
+    const activeViewId = workflowType ? "view-invoice" : `view-${nextView}`;
     document.querySelectorAll(".nav-tab").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.view === viewName);
+      button.classList.toggle("is-active", button.dataset.view === nextView);
     });
     document.querySelectorAll(".view").forEach((view) => {
-      view.classList.toggle("is-active", view.id === `view-${viewName}`);
+      view.classList.toggle("is-active", view.id === activeViewId);
     });
-    window.location.hash = viewName;
+    if (options.replaceHash !== false) window.location.hash = nextView;
+    if (nextView === "overview") renderOverview();
+    window.scrollTo({ top: 0, behavior: options.instant ? "auto" : "smooth" });
+  }
+
+  function normalizeViewName(viewName) {
+    if (["overview", "rent", "utility", "tenants", "settings"].includes(viewName)) return viewName;
+    if (viewName === "invoice") return currentWorkflow;
+    return "overview";
+  }
+
+  function invoiceWorkflowFromView(viewName) {
+    if (viewName === "rent") return "rent";
+    if (viewName === "utility") return "utility";
+    return "";
+  }
+
+  function setInvoiceWorkflow(invoiceType, options = {}) {
+    const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
+    currentWorkflow = nextType;
+    if (!options.preserveDraft && normalizeInvoiceType(draft.invoiceType) !== nextType) {
+      startNewInvoice(nextType, { silent: true });
+      return;
+    }
+    renderInvoiceEditor();
+    renderInvoicePreview();
+  }
+
+  function renderSplash() {
+    if (!els.splashScreen) return;
+    els.splashVersion.textContent = APP_VERSION;
+    els.splashCommitDate.textContent = APP_COMMIT_DATE;
+    const seen = sessionStorage.getItem(SPLASH_SEEN_KEY) === "true";
+    els.splashScreen.hidden = seen;
+  }
+
+  function dismissSplash() {
+    sessionStorage.setItem(SPLASH_SEEN_KEY, "true");
+    els.splashScreen.hidden = true;
   }
 
   function renderTenantOptions() {
@@ -347,6 +433,8 @@
   function renderInvoiceEditor() {
     renderTenantOptions();
     draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
+    currentWorkflow = draft.invoiceType === "utility" ? "utility" : "rent";
+    renderWorkflowHeader(draft.invoiceType);
     els.invoiceType.value = draft.invoiceType;
     els.utilityCalculator.hidden = !invoiceAllowsUtility(draft.invoiceType);
     els.invoiceNumber.value = draft.invoiceNumber;
@@ -362,6 +450,19 @@
     renderLineItems();
     renderUtilityCalculation();
     renderTotals();
+  }
+
+  function renderWorkflowHeader(invoiceType) {
+    const type = normalizeInvoiceType(invoiceType);
+    if (type === "utility") {
+      els.workflowEyebrow.textContent = "Utility workflow";
+      els.invoiceHeading.textContent = "Utility Invoice";
+      els.workflowCopy.textContent = "Calculate shared utility bills and save a separate utility invoice.";
+      return;
+    }
+    els.workflowEyebrow.textContent = "Rent workflow";
+    els.invoiceHeading.textContent = "Rent Invoice";
+    els.workflowCopy.textContent = "Create monthly rent invoices for active tenants.";
   }
 
   function renderLineItems() {
@@ -642,7 +743,7 @@
     if (invoiceButton) {
       selectedTenantId = invoiceButton.dataset.createTenantInvoice;
       startNewInvoice("rent");
-      setView("invoice");
+      setView("rent", { preserveDraft: true });
       return;
     }
 
@@ -692,6 +793,117 @@
     els.metricPaid.textContent = String(paidInvoices.length);
   }
 
+  function renderOverview() {
+    if (!els.overviewCycleLabel) return;
+    const summary = currentCycleSummary();
+    els.overviewCycleLabel.textContent = summary.period;
+    els.overviewCycleStatus.textContent = summary.openInvoices ? `${summary.openInvoices} open` : "Clear";
+    els.cycleExpectedRent.textContent = formatMoney(summary.expectedRent);
+    els.cycleRentInvoiced.textContent = formatMoney(summary.rentInvoiced);
+    els.cycleUtilityInvoiced.textContent = formatMoney(summary.utilityInvoiced);
+    els.cycleOpenBalance.textContent = formatMoney(summary.openBalance);
+    els.rentWorkflowCount.textContent = `${summary.missingRent.length} remaining`;
+    els.utilityWorkflowCount.textContent = `${summary.missingUtilities.length} remaining`;
+    els.cycleMissingRent.innerHTML = overviewTenantList(summary.missingRent, "Rent is complete for active tenants.");
+    els.cycleMissingUtilities.innerHTML = overviewTenantList(
+      summary.missingUtilities,
+      "Utility invoices are complete for active tenants."
+    );
+    els.overviewInvoiceList.innerHTML = overviewInvoiceList(summary.cycleInvoices);
+  }
+
+  function currentCycleSummary() {
+    const period = draft.billingPeriod || monthLabel(new Date());
+    const activeTenants = getActiveTenants();
+    const cycleInvoices = state.invoices.filter((invoice) => sameCycle(invoice.billingPeriod, period));
+    const missingRent = activeTenants.filter((tenant) => {
+      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesRent(invoice));
+    });
+    const missingUtilities = activeTenants.filter((tenant) => {
+      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesUtility(invoice));
+    });
+
+    return {
+      period,
+      cycleInvoices,
+      expectedRent: activeTenants.reduce((total, tenant) => total + toNumber(tenant.rent), 0),
+      rentInvoiced: cycleInvoices.reduce((total, invoice) => total + invoiceCategoryTotal(invoice, "rent"), 0),
+      utilityInvoiced: cycleInvoices.reduce((total, invoice) => total + invoiceCategoryTotal(invoice, "utility"), 0),
+      openBalance: cycleInvoices
+        .filter((invoice) => invoice.status !== "paid")
+        .reduce((total, invoice) => total + calculateTotal(invoice), 0),
+      openInvoices: cycleInvoices.filter((invoice) => invoice.status !== "paid").length,
+      missingRent,
+      missingUtilities,
+    };
+  }
+
+  function sameCycle(invoicePeriod, currentPeriod) {
+    return normalizeCycleLabel(invoicePeriod) === normalizeCycleLabel(currentPeriod);
+  }
+
+  function normalizeCycleLabel(value) {
+    return String(value || monthLabel(new Date())).trim().toLowerCase();
+  }
+
+  function invoiceIncludesRent(invoice) {
+    const type = normalizeInvoiceType(invoice.invoiceType);
+    return type === "rent" || type === "combined" || (invoice.lineItems || []).some((item) => item.type === "Rent");
+  }
+
+  function invoiceIncludesUtility(invoice) {
+    const type = normalizeInvoiceType(invoice.invoiceType);
+    return type === "utility" || type === "combined" || (invoice.lineItems || []).some((item) => item.type !== "Rent");
+  }
+
+  function invoiceCategoryTotal(invoice, category) {
+    const lineTotal = (invoice.lineItems || []).reduce((total, item) => {
+      const isRent = item.type === "Rent";
+      if (category === "rent" && isRent) return total + toNumber(item.amount);
+      if (category === "utility" && !isRent) return total + toNumber(item.amount);
+      return total;
+    }, 0);
+    if (lineTotal) return lineTotal;
+    const type = normalizeInvoiceType(invoice.invoiceType);
+    if ((category === "rent" && type === "rent") || (category === "utility" && type === "utility")) {
+      return calculateTotal(invoice);
+    }
+    return 0;
+  }
+
+  function overviewTenantList(tenants, completeMessage) {
+    if (!tenants.length) return `<div class="empty-state">${escapeHtml(completeMessage)}</div>`;
+    return tenants
+      .map((tenant) => {
+        const label = [tenant.name, tenant.unit].filter(Boolean).join(" - ");
+        return `<div class="overview-list-item">${escapeHtml(label || "Tenant")}</div>`;
+      })
+      .join("");
+  }
+
+  function overviewInvoiceList(invoices) {
+    if (!invoices.length) return `<div class="empty-state">No invoices saved for this billing period yet.</div>`;
+    return [...invoices]
+      .sort((a, b) => `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`))
+      .slice(0, 8)
+      .map((invoice) => {
+        const tenant = getTenant(invoice.tenantId);
+        return `
+          <article class="invoice-card">
+            <div>
+              <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
+              <p>${escapeHtml(invoiceTypeLabel(invoice.invoiceType))} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
+                invoice.status === "paid" ? "Paid" : "Open"
+              }</p>
+            </div>
+            <div class="card-actions">
+              <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+            </div>
+          </article>`;
+      })
+      .join("");
+  }
+
   function saveInvoice(event) {
     event.preventDefault();
     const invoice = persistCurrentInvoice("Saved invoice");
@@ -726,14 +938,17 @@
     return invoice;
   }
 
-  function startNewInvoice(invoiceType = draft?.invoiceType || "rent") {
+  function startNewInvoice(invoiceType = currentWorkflow || draft?.invoiceType || "rent", options = {}) {
     selectedInvoiceId = "";
+    const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
+    currentWorkflow = nextType;
     const tenantId = getTenant(selectedTenantId)?.active === false ? firstActiveTenantId() : selectedTenantId || firstActiveTenantId();
     selectedTenantId = tenantId || "";
-    draft = createBlankInvoice(selectedTenantId, invoiceType);
+    draft = createBlankInvoice(selectedTenantId, nextType);
     renderInvoiceEditor();
     renderInvoicePreview();
-    showToast("New invoice ready.");
+    renderOverview();
+    if (!options.silent) showToast("New invoice ready.");
   }
 
   function markInvoicePaid() {
@@ -762,8 +977,10 @@
       selectedInvoiceId = invoice.id;
       selectedTenantId = invoice.tenantId;
       draft = clone(invoice);
+      currentWorkflow = normalizeInvoiceType(invoice.invoiceType) === "utility" ? "utility" : "rent";
       renderInvoiceEditor();
       renderInvoicePreview();
+      setView(currentWorkflow, { preserveDraft: true });
       window.scrollTo({ top: 0, behavior: "smooth" });
       showToast("Invoice opened.");
     }

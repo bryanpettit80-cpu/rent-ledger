@@ -8,15 +8,34 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v15" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v16" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v15" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v16" />
   </head>
   <body>
     <div id="app" class="app">
+      <section class="splash-screen" id="splashScreen" aria-labelledby="splashTitle">
+        <div class="splash-panel">
+          <img src="assets/rent-ledger-icon.svg" alt="" class="splash-mark" />
+          <p class="eyebrow">Rent Ledger</p>
+          <h1 id="splashTitle">Invoice cycle workspace</h1>
+          <div class="splash-meta" aria-label="Build details">
+            <div>
+              <span>Version</span>
+              <strong id="splashVersion">rent-ledger-v16</strong>
+            </div>
+            <div>
+              <span>Commit date</span>
+              <strong id="splashCommitDate">June 28, 2026</strong>
+            </div>
+          </div>
+          <button class="primary-button" id="enterApp" type="button">Open dashboard</button>
+        </div>
+      </section>
+
       <header class="topbar">
-        <a class="brand" href="#invoice" aria-label="Rent Ledger home">
+        <a class="brand" href="#overview" aria-label="Rent Ledger home">
           <img src="assets/rent-ledger-icon.svg" alt="" class="brand-mark" />
           <span>
             <strong>Rent Ledger</strong>
@@ -25,30 +44,104 @@
         </a>
 
         <nav class="nav-tabs" aria-label="Primary">
-          <button class="nav-tab is-active" data-view="invoice" type="button">Invoice</button>
+          <button class="nav-tab is-active" data-view="overview" type="button">Overview</button>
+          <button class="nav-tab" data-view="rent" type="button">Rent</button>
+          <button class="nav-tab" data-view="utility" type="button">Utilities</button>
           <button class="nav-tab" data-view="tenants" type="button">Tenants</button>
           <button class="nav-tab" data-view="settings" type="button">Settings</button>
         </nav>
-
-        <div class="top-actions">
-          <button class="icon-button" id="exportBackup" type="button" title="Export backup" aria-label="Export backup">
-            <span aria-hidden="true">&darr;</span>
-          </button>
-          <label class="icon-button file-button" title="Import backup" aria-label="Import backup">
-            <span aria-hidden="true">&uarr;</span>
-            <input id="importBackup" type="file" accept="application/json" />
-          </label>
-        </div>
       </header>
 
       <main class="main">
-        <section class="view view-invoice is-active" id="view-invoice" aria-labelledby="invoiceHeading">
+        <section class="view view-overview is-active" id="view-overview" aria-labelledby="overviewHeading">
+          <div class="overview-layout">
+            <section class="panel overview-hero">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Current cycle</p>
+                  <h1 id="overviewHeading">Invoice Overview</h1>
+                  <p class="panel-copy" id="overviewCycleLabel">Current billing period</p>
+                </div>
+                <span class="status-pill" id="overviewCycleStatus">Open</span>
+              </div>
+              <div class="metric-grid overview-metrics">
+                <div class="metric">
+                  <span>Expected rent</span>
+                  <strong id="cycleExpectedRent">$0.00</strong>
+                </div>
+                <div class="metric">
+                  <span>Rent invoiced</span>
+                  <strong id="cycleRentInvoiced">$0.00</strong>
+                </div>
+                <div class="metric">
+                  <span>Utilities invoiced</span>
+                  <strong id="cycleUtilityInvoiced">$0.00</strong>
+                </div>
+                <div class="metric">
+                  <span>Open balance</span>
+                  <strong id="cycleOpenBalance">$0.00</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel workflow-panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Workflows</p>
+                  <h2>Create Invoices</h2>
+                </div>
+              </div>
+              <div class="workflow-actions">
+                <button class="workflow-button" id="startRentWorkflow" type="button">
+                  <span>Rent</span>
+                  <strong id="rentWorkflowCount">0 remaining</strong>
+                </button>
+                <button class="workflow-button" id="startUtilityWorkflow" type="button">
+                  <span>Utilities</span>
+                  <strong id="utilityWorkflowCount">0 remaining</strong>
+                </button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Cycle progress</p>
+                  <h2>Remaining Work</h2>
+                </div>
+              </div>
+              <div class="overview-list-group">
+                <div>
+                  <h3>Missing rent invoices</h3>
+                  <div class="overview-list" id="cycleMissingRent"></div>
+                </div>
+                <div>
+                  <h3>Missing utility invoices</h3>
+                  <div class="overview-list" id="cycleMissingUtilities"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Recent</p>
+                  <h2>Cycle Invoices</h2>
+                </div>
+              </div>
+              <div class="invoice-history overview-invoices" id="overviewInvoiceList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view view-invoice" id="view-invoice" aria-labelledby="invoiceHeading">
           <div class="workspace">
             <section class="panel editor-panel">
               <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Create</p>
-                  <h1 id="invoiceHeading">Tenant Invoice</h1>
+                  <p class="eyebrow" id="workflowEyebrow">Rent workflow</p>
+                  <h1 id="invoiceHeading">Rent Invoice</h1>
+                  <p class="panel-copy" id="workflowCopy">Create monthly rent invoices for active tenants.</p>
                 </div>
                 <span class="status-pill" id="invoiceStatus">Draft</span>
               </div>
@@ -59,7 +152,7 @@
                     Tenant
                     <select id="tenantSelect" name="tenantId"></select>
                   </label>
-                  <label>
+                  <label class="workflow-type-field">
                     Invoice type
                     <select id="invoiceType" name="invoiceType">
                       <option value="rent">Rent invoice</option>
@@ -363,6 +456,10 @@
                 </div>
                 <div class="button-row">
                   <button class="secondary-button" id="exportBackupSettings" type="button">Export backup</button>
+                  <label class="secondary-button file-import-button" for="importBackup">
+                    Import backup
+                    <input id="importBackup" type="file" accept="application/json" />
+                  </label>
                   <button class="secondary-button" id="restoreLatestBackup" type="button">Restore latest</button>
                 </div>
               </div>
@@ -409,6 +506,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v15" defer></script>
+    <script src="app.js?v=rent-ledger-v16" defer></script>
   </body>
 </html>
