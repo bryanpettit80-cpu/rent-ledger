@@ -64,11 +64,11 @@ The app sets the current rent cycle automatically:
 
 - From the 1st through the 10th of a month, the current rent cycle is the current calendar month.
 - Beginning on the 11th, the current rent cycle moves to the next calendar month.
-- Rent invoices use the current rent cycle as the billing period.
-- Utility invoices use the immediately preceding rent cycle as the billing period.
+- Rent invoices use the current rent cycle as the billing period, labeled with the two-digit month number.
+- Utility invoices use the immediately preceding rent cycle as the billing period, labeled with the two-digit month number.
 - Rent and utility invoices are due on the 1st day of the rent cycle month.
 
-Example: on June 28, 2026, the rent billing period is `July 2026`, the utility billing period is `June 2026`, and both invoices are due `July 1, 2026`.
+Example: on June 28, 2026, the rent billing period is `07 - July 2026`, the utility billing period is `06 - June 2026`, and both invoices are due `July 1, 2026`.
 
 ### Rent Invoice
 

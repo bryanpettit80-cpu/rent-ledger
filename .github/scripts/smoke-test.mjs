@@ -21,8 +21,31 @@ function assert(condition, message) {
   if (!condition) failures.push(message);
 }
 
+function monthLabel(date) {
+  const monthNumber = String(date.getMonth() + 1).padStart(2, "0");
+  const monthName = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+  return `${monthNumber} - ${monthName}`;
+}
+
+function currentRentCycleDate(referenceDate = new Date()) {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+  const cycleMonth = referenceDate.getDate() >= 11 ? month + 1 : month;
+  return new Date(year, cycleMonth, 1);
+}
+
+function previousMonthDate(date) {
+  return new Date(date.getFullYear(), date.getMonth() - 1, 1);
+}
+
 try {
   const page = await context.newPage();
+  const rentCycleDate = currentRentCycleDate();
+  const expectedRentPeriod = monthLabel(rentCycleDate);
+  const expectedUtilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
   await page.goto(baseUrl, { waitUntil: "networkidle" });
 
   await page.evaluate((version) => {
@@ -48,6 +71,19 @@ try {
           excludeUtilities: false,
           memo: "",
         },
+        {
+          id: "brenda",
+          name: "Brenda Carter",
+          unit: "Unit B",
+          address: "",
+          email: "",
+          phone: "",
+          rent: 900,
+          utilityUnits: 2,
+          active: true,
+          excludeUtilities: false,
+          memo: "",
+        },
       ],
       invoices: [],
     };
@@ -67,6 +103,7 @@ try {
       saveState: document.getElementById("saveState")?.textContent?.trim(),
       startNewText: document.getElementById("newInvoice")?.textContent?.trim(),
       markPaidDisabled: document.getElementById("markPaid")?.disabled,
+      billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
       applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
@@ -86,6 +123,7 @@ try {
   assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
   assert(rentState.startNewText === "Start new", `Expected Start new button, got ${rentState.startNewText}.`);
   assert(rentState.markPaidDisabled, "Mark paid should be disabled before save.");
+  assert(rentState.billingPeriod === expectedRentPeriod, `Expected rent period ${expectedRentPeriod}, got ${rentState.billingPeriod}.`);
   assert(rentState.utilityHidden && rentState.utilityDisplay === "none", "Rent tab must hide the utility calculator.");
   assert(!rentState.applyRentHidden && rentState.applyRentDisplay !== "none", "Rent Apply charge button should be visible.");
   assert(rentState.invoiceButtons.join("|") === "Save|Print", `Expected Save|Print, got ${rentState.invoiceButtons.join("|")}.`);
@@ -112,6 +150,7 @@ try {
     const utility = document.getElementById("utilityCalculator");
     return {
       invoiceType: document.getElementById("invoiceType")?.value,
+      billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
       applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
@@ -119,8 +158,32 @@ try {
     };
   });
   assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
+  assert(
+    utilityState.billingPeriod === expectedUtilityPeriod,
+    `Expected utility period ${expectedUtilityPeriod}, got ${utilityState.billingPeriod}.`
+  );
   assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
   assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
+
+  await page.fill("#utilityTotalUnits", "3");
+  await page.fill("#utilityElectric", "120");
+  await page.fill("#utilityWaterSewer", "60");
+  await page.fill("#utilityGas", "30");
+  await page.selectOption("#tenantSelect", "brenda");
+  const utilityTenantSwitch = await page.evaluate(() => ({
+    tenantId: document.getElementById("tenantSelect")?.value,
+    tenantUnits: document.getElementById("utilityTenantUnits")?.value,
+    totalUnits: document.getElementById("utilityTotalUnits")?.value,
+    electric: document.getElementById("utilityElectric")?.value,
+    waterSewer: document.getElementById("utilityWaterSewer")?.value,
+    gas: document.getElementById("utilityGas")?.value,
+  }));
+  assert(utilityTenantSwitch.tenantId === "brenda", `Expected selected utility tenant brenda, got ${utilityTenantSwitch.tenantId}.`);
+  assert(utilityTenantSwitch.tenantUnits === "2", `Expected Brenda utility units 2, got ${utilityTenantSwitch.tenantUnits}.`);
+  assert(utilityTenantSwitch.totalUnits === "3", `Expected total utility units to persist, got ${utilityTenantSwitch.totalUnits}.`);
+  assert(utilityTenantSwitch.electric === "120", `Expected electric total to persist, got ${utilityTenantSwitch.electric}.`);
+  assert(utilityTenantSwitch.waterSewer === "60", `Expected water/sewer total to persist, got ${utilityTenantSwitch.waterSewer}.`);
+  assert(utilityTenantSwitch.gas === "30", `Expected gas total to persist, got ${utilityTenantSwitch.gas}.`);
 
   await page.click('[data-view="settings"]');
   const settingsState = await page.evaluate(() => ({

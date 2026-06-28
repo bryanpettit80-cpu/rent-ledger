@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v20";
+  const APP_VERSION = "rent-ledger-v21";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -870,8 +870,18 @@
     const currentItems = options.keepCurrentItems ? draft.lineItems : [];
     if (options.force || !draft.lineItems.length) {
       draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, currentItems);
-      draft.utilityCalculation = defaultUtilityCalculation(tenant);
+      draft.utilityCalculation = options.keepCurrentItems
+        ? utilityCalculationForTenant(tenant, draft.utilityCalculation)
+        : defaultUtilityCalculation(tenant);
     }
+  }
+
+  function utilityCalculationForTenant(tenant, currentCalculation) {
+    const current = normalizeUtilityCalculation(currentCalculation);
+    return {
+      ...current,
+      tenantUnits: defaultUtilityCalculation(tenant).tenantUnits,
+    };
   }
 
   function renderMetrics() {
@@ -946,7 +956,10 @@
   }
 
   function normalizeCycleLabel(value) {
-    return String(value || monthLabel(new Date())).trim().toLowerCase();
+    return String(value || monthLabel(new Date()))
+      .trim()
+      .toLowerCase()
+      .replace(/^\d{1,2}\s*[-/]\s*/, "");
   }
 
   function invoiceIncludesRent(invoice) {
@@ -2618,10 +2631,12 @@
   }
 
   function monthLabel(date) {
-    return new Intl.DateTimeFormat("en-US", {
+    const monthNumber = String(date.getMonth() + 1).padStart(2, "0");
+    const monthName = new Intl.DateTimeFormat("en-US", {
       month: "long",
       year: "numeric",
     }).format(date);
+    return `${monthNumber} - ${monthName}`;
   }
 
   function currentRentCycleDate(referenceDate = new Date()) {
