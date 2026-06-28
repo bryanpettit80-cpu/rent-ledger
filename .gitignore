@@ -11,4 +11,5 @@ Thumbs.db
 backups/
 exports/
 output/
+tmp/
 .codex-remote-attachments/

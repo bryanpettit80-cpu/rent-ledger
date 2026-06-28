@@ -13,6 +13,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Creates separate `Rent invoice` and `Utility invoice` records.
 - Stores tenant profiles, landlord contact details, and payment instructions.
 - Calculates utility reimbursements from actual utility bills.
+- Creates all remaining utility invoices for the current cycle from one utility calculation.
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
 - Shows a live invoice preview before printing or saving.
 - Prints invoices to paper or PDF through the browser.
@@ -93,6 +94,7 @@ Utility invoices:
 - Do not include rent.
 - Show the Utility Allocation section.
 - Add the calculated utility reimbursement as a generated charge line.
+- Use `Create all utilities` to generate utility invoices for every utility-billable tenant who is still missing one for the current utility period.
 - Show the allocation math on the invoice preview.
 
 ### Invoice States
@@ -100,9 +102,9 @@ Utility invoices:
 The invoice header uses these states:
 
 - `Not saved`: the current invoice is a working draft in the browser and has not been saved as an invoice record.
-- `Saved`: the invoice is saved in the browser. If Drive is authorized, `Save` also uploads app data and the invoice PDF to Drive.
+- `Saved`: the invoice is saved in the browser. If Drive is connected, `Save` also uploads app data and the invoice PDF to Drive.
 - `Unsaved changes`: a saved invoice was edited after its last save.
-- `Paid`: the saved invoice has been marked paid.
+- `Paid`: the saved invoice has been marked paid from the Invoices page or overview invoice list.
 
 Use `Start new` only when you want to discard the current working form and begin a fresh invoice for the current workflow.
 
@@ -185,10 +187,10 @@ Do not paste a Google account email, project ID, API key, or client secret. Thos
 In `Settings`:
 
 1. Leave the prefilled Google OAuth client ID in place unless you created a replacement.
-2. Use `Authorize Drive` to grant Google Drive access.
-3. Use `Load cloud data` to replace this browser's data with the Drive copy.
-4. Use `Sync now` to upload this browser's current data to Drive.
-5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
+2. Use `Connect Drive` to grant Google Drive access.
+3. Use `Download from Drive` to replace this browser's data with the Drive copy.
+4. Use `Upload to Drive` to upload this browser's current data to Drive.
+5. Open `Advanced Drive setup` only when you need to change the OAuth client ID or auto-upload setting.
 
 Drive actions save the current OAuth client ID and auto-sync setting before they run, so there is no separate connection-settings save step.
 
@@ -200,9 +202,11 @@ The invoice screen has one `Save` button. It saves the current invoice to the br
 Rent Ledger/Invoices/
 ```
 
+The utility workflow's `Create all utilities` button creates all missing utility invoices locally first, then uploads the updated state and each generated PDF to Drive when Drive is connected.
+
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 
-When you click a Drive action such as `Save`, `Sync now`, `Load cloud data`, or `Authorize Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
+When you click a Drive action such as `Save`, `Upload to Drive`, `Download from Drive`, or `Connect Drive`, the app asks Google for a new short-lived token only if one is needed. Browser security can still require account selection or consent at that point.
 
 Important:
 
@@ -288,7 +292,7 @@ For local phone access, make sure:
 
 Without Google Drive sync, that is expected. Data is stored in each browser separately.
 
-With Google Drive sync, authorize Drive on the second device and use `Load cloud data`.
+With Google Drive sync, connect Drive on the second device and use `Download from Drive`.
 
 ## Development Notes
 

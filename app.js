@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v22";
+  const APP_VERSION = "rent-ledger-v23";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -91,7 +91,9 @@
       "utilityGas",
       "utilityOther",
       "utilityCalcResult",
+      "utilityBatchSummary",
       "applyUtilityCharge",
+      "batchUtilityInvoices",
       "lineItems",
       "previousBalance",
       "credits",
@@ -121,7 +123,6 @@
       "addLineItem",
       "saveInvoice",
       "newInvoice",
-      "markPaid",
       "printInvoice",
       "clearPaid",
       "tenantList",
@@ -201,22 +202,6 @@
       markDirty();
     });
 
-    els.invoiceType.addEventListener("change", () => {
-      const previousType = normalizeInvoiceType(draft.invoiceType);
-      syncDraftFromForm();
-      const tenant = getTenant(draft.tenantId);
-      draft.invoiceType = normalizeInvoiceType(els.invoiceType.value) === "utility" ? "utility" : "rent";
-      currentWorkflow = draft.invoiceType;
-      draft.lineItems = lineItemsForInvoiceType(tenant, draft.invoiceType, draft.lineItems);
-      if (!selectedInvoiceId && isGeneratedInvoiceNumber(draft.invoiceNumber) && draft.invoiceType !== previousType) {
-        draft.invoiceNumber = nextInvoiceNumber(draft.invoiceType);
-      }
-      renderInvoiceEditor();
-      renderInvoicePreview();
-      renderOverview();
-      markDirty();
-    });
-
     [
       els.invoiceNumber,
       els.issueDate,
@@ -253,6 +238,7 @@
       renderOverview();
       markDirty();
     });
+    els.batchUtilityInvoices.addEventListener("click", batchCreateUtilityInvoices);
 
     els.applyRentCharge.addEventListener("click", () => {
       syncDraftFromForm();
@@ -316,11 +302,10 @@
     els.driveAutoSync.addEventListener("change", () => saveDriveSettings(false));
     els.connectDrive.addEventListener("click", connectDrive);
     els.loadDriveState.addEventListener("click", loadStateFromDrive);
-    els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual sync"));
+    els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual upload"));
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.newInvoice.addEventListener("click", () => startNewInvoice(currentWorkflow));
-    els.markPaid.addEventListener("click", markInvoicePaid);
     els.printInvoice.addEventListener("click", () => window.print());
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
@@ -365,7 +350,7 @@
   }
 
   function normalizeViewName(viewName) {
-    if (["overview", "rent", "utility", "tenants", "settings"].includes(viewName)) return viewName;
+    if (["overview", "rent", "utility", "invoices", "tenants", "settings"].includes(viewName)) return viewName;
     if (viewName === "invoice") return currentWorkflow;
     return "overview";
   }
@@ -451,7 +436,6 @@
     renderTenantOptions();
     draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
     currentWorkflow = draft.invoiceType === "utility" ? "utility" : "rent";
-    renderInvoiceTypeOptions(draft.invoiceType);
     renderWorkflowHeader(draft.invoiceType);
     els.invoiceType.value = draft.invoiceType;
     els.utilityCalculator.hidden = !invoiceAllowsUtility(draft.invoiceType);
@@ -464,7 +448,6 @@
     els.credits.value = normalizeNumberInput(draft.credits);
     els.invoiceNotes.value = draft.notes;
     els.applyRentCharge.hidden = normalizeInvoiceType(draft.invoiceType) !== "rent";
-    els.markPaid.disabled = !selectedInvoiceId || draft.status === "paid";
     els.invoiceStatus.textContent = invoiceStatusLabel();
     els.saveState.textContent = selectedInvoiceId ? "Saved" : "Not saved";
     renderLineItems();
@@ -475,22 +458,6 @@
   function invoiceStatusLabel() {
     if (draft.status === "paid") return "Paid";
     return selectedInvoiceId ? "Saved" : "Not saved";
-  }
-
-  function renderInvoiceTypeOptions(invoiceType) {
-    const type = normalizeInvoiceType(invoiceType);
-    const options =
-      type === "utility"
-        ? [{ value: "utility", label: "Utility invoice" }]
-        : [{ value: "rent", label: "Rent invoice" }];
-
-    if (selectedInvoiceId && type === "combined") {
-      options.push({ value: "combined", label: "Combined invoice" });
-    }
-
-    els.invoiceType.innerHTML = options
-      .map((option) => `<option value="${option.value}">${option.label}</option>`)
-      .join("");
   }
 
   function renderWorkflowHeader(invoiceType) {
@@ -666,14 +633,30 @@
   function renderUtilityCalculation() {
     if (!invoiceAllowsUtility(draft.invoiceType)) {
       els.utilityCalcResult.textContent = "Utility allocation is available for utility invoices.";
+      renderUtilityBatchSummary();
       return;
     }
     const details = utilityCalculationDetails(draft.utilityCalculation || {});
     if (!details.hasTotal) {
       els.utilityCalcResult.textContent = "Enter bills and units to calculate a utility share.";
+      renderUtilityBatchSummary();
       return;
     }
     els.utilityCalcResult.textContent = `${details.explanation} ${details.billSummary}`;
+    renderUtilityBatchSummary();
+  }
+
+  function renderUtilityBatchSummary() {
+    if (!els.utilityBatchSummary) return;
+    if (!invoiceAllowsUtility(draft.invoiceType)) {
+      els.utilityBatchSummary.textContent = "";
+      return;
+    }
+    const summary = currentCycleSummary();
+    const remaining = summary.missingUtilities.length;
+    els.utilityBatchSummary.textContent = remaining
+      ? `${remaining} utility-billable tenant${remaining === 1 ? "" : "s"} still need ${summary.utilityPeriod} invoices.`
+      : `${summary.utilityPeriod} utility invoices are complete.`;
   }
 
   function applyUtilityCharge() {
@@ -700,6 +683,80 @@
       draft.lineItems.push(line);
     }
     showToast("Utility charge applied.");
+  }
+
+  async function batchCreateUtilityInvoices() {
+    syncDraftFromForm();
+    if (!invoiceAllowsUtility(draft.invoiceType)) {
+      showToast("Open the utility workflow first.");
+      return;
+    }
+
+    const baseCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+    const baseDetails = utilityCalculationDetails(baseCalculation);
+    if (!baseDetails.hasTotal || baseCalculation.totalUnits <= 0) {
+      showToast("Enter utility bills and total units first.");
+      return;
+    }
+
+    const summary = currentCycleSummary();
+    const tenants = summary.missingUtilities;
+    if (!tenants.length) {
+      showToast(`${summary.utilityPeriod} utility invoices are already complete.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Create ${tenants.length} utility invoice${tenants.length === 1 ? "" : "s"} for ${summary.utilityPeriod}?`
+    );
+    if (!confirmed) return;
+
+    const createdInvoices = [];
+    tenants.forEach((tenant) => {
+      const invoice = createBlankInvoice(tenant.id, "utility");
+      const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
+      const tenantDetails = utilityCalculationDetails(tenantCalculation);
+      if (!tenantDetails.hasTotal || tenantDetails.share <= 0) return;
+
+      invoice.id = cryptoId();
+      invoice.issueDate = draft.issueDate || invoice.issueDate;
+      invoice.dueDate = summary.dueDate;
+      invoice.billingPeriod = summary.utilityPeriod;
+      invoice.utilityCalculation = tenantCalculation;
+      invoice.notes = draft.notes || "";
+      invoice.paymentInstructions = draft.paymentInstructions || state.landlord.paymentInstructions;
+      invoice.lineItems = [
+        {
+          type: "Utility",
+          description: utilityLineDescription(tenantCalculation),
+          amount: tenantDetails.share,
+          generatedUtility: true,
+        },
+      ];
+      invoice.status = "open";
+      invoice.updatedAt = new Date().toISOString();
+      state.invoices.push(invoice);
+      createdInvoices.push(invoice);
+    });
+
+    if (!createdInvoices.length) {
+      showToast("No utility invoices were created. Check each tenant's utility units.");
+      return;
+    }
+
+    selectedInvoiceId = createdInvoices[0].id;
+    selectedTenantId = createdInvoices[0].tenantId;
+    draft = clone(createdInvoices[0]);
+    currentWorkflow = "utility";
+    saveState(`Created ${createdInvoices.length} utility invoices`);
+    renderAll();
+    setView("invoices", { preserveDraft: true });
+    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices);
+    showToast(
+      driveSaved
+        ? `Created ${createdInvoices.length} utility invoices and uploaded PDFs.`
+        : `Created ${createdInvoices.length} utility invoices locally. Drive save skipped.`
+    );
   }
 
   function applyRentCharge() {
@@ -749,6 +806,9 @@
             </div>
             <div class="card-actions">
               <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+              <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
+          paid ? "false" : "true"
+        }" type="button">${paid ? "Reopen" : "Mark paid"}</button>
               <button class="small-button danger" data-delete-invoice="${escapeAttr(invoice.id)}" type="button">Delete</button>
             </div>
           </article>`;
@@ -1020,6 +1080,9 @@
             </div>
             <div class="card-actions">
               <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+              <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
+                invoice.status === "paid" ? "false" : "true"
+              }" type="button">${invoice.status === "paid" ? "Reopen" : "Mark paid"}</button>
             </div>
           </article>`;
       })
@@ -1080,25 +1143,28 @@
     if (!options.silent) showToast("Fresh invoice form ready.");
   }
 
-  function markInvoicePaid() {
-    syncDraftFromForm();
-    draft.status = "paid";
-
-    if (selectedInvoiceId) {
-      const invoice = state.invoices.find((item) => item.id === selectedInvoiceId);
-      if (invoice) {
-        Object.assign(invoice, getDraftSnapshot(), { status: "paid", updatedAt: new Date().toISOString() });
-        saveState("Marked invoice paid");
-      }
+  function setInvoicePaid(invoiceId, paid) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return;
+    invoice.status = paid ? "paid" : "open";
+    invoice.updatedAt = new Date().toISOString();
+    if (selectedInvoiceId === invoiceId) {
+      draft = clone(invoice);
     }
-
+    saveState(paid ? "Marked invoice paid" : "Reopened invoice");
     renderAll();
-    showToast("Invoice marked paid.");
+    showToast(paid ? "Invoice marked paid." : "Invoice reopened.");
   }
 
   function handleInvoiceHistoryClick(event) {
+    const paidButton = event.target.closest("[data-toggle-paid-invoice]");
     const loadButton = event.target.closest("[data-load-invoice]");
     const deleteButton = event.target.closest("[data-delete-invoice]");
+
+    if (paidButton) {
+      setInvoicePaid(paidButton.dataset.togglePaidInvoice, paidButton.dataset.paid === "true");
+      return;
+    }
 
     if (loadButton) {
       const invoice = state.invoices.find((item) => item.id === loadButton.dataset.loadInvoice);
@@ -1128,18 +1194,18 @@
   function clearPaidInvoices() {
     const paidCount = state.invoices.filter((invoice) => invoice.status === "paid").length;
     if (!paidCount) {
-      showToast("No paid invoices to clear.");
+      showToast("No paid invoices to delete.");
       return;
     }
-    if (!window.confirm(`Clear ${paidCount} paid invoice${paidCount === 1 ? "" : "s"}?`)) return;
+    if (!window.confirm(`Delete ${paidCount} paid invoice${paidCount === 1 ? "" : "s"}? This cannot be undone.`)) return;
 
     state.invoices = state.invoices.filter((invoice) => invoice.status !== "paid");
     if (selectedInvoiceId && !state.invoices.some((invoice) => invoice.id === selectedInvoiceId)) {
       startNewInvoice();
     }
-    saveState("Cleared paid invoices");
+    saveState("Deleted paid invoices");
     renderAll();
-    showToast(`${paidCount} paid invoice${paidCount === 1 ? "" : "s"} cleared.`);
+    showToast(`${paidCount} paid invoice${paidCount === 1 ? "" : "s"} deleted.`);
   }
 
   function saveTenant(event) {
@@ -1305,17 +1371,17 @@
     if (message) {
       els.driveStatus.textContent = message;
     } else if (!hasClientId) {
-      els.driveStatus.textContent = "Setup needed: add a Google OAuth client ID.";
+      els.driveStatus.textContent = "Setup needed: add the Drive client ID in Advanced Drive setup.";
     } else if (!hasValidClientId) {
-      els.driveStatus.textContent = "Setup needed: client ID format is invalid.";
+      els.driveStatus.textContent = "Setup needed: Drive client ID is invalid.";
     } else if (connected) {
       els.driveStatus.textContent = appSettings.driveAutoSync
-        ? "Connected: saves can upload to Drive and auto-sync is on."
-        : "Connected: invoice Save and Sync now can upload to Drive.";
+        ? "Connected. Saves upload to Drive automatically."
+        : "Connected. Save and Upload to Drive are available.";
     } else if (appSettings.driveRemembered) {
-      els.driveStatus.textContent = "Previously authorized: click Sync now or Authorize Drive if Google asks again.";
+      els.driveStatus.textContent = "Previously connected. Upload or Download may ask Google to confirm.";
     } else {
-      els.driveStatus.textContent = "Not connected: click Authorize Drive.";
+      els.driveStatus.textContent = "Not connected. Click Connect Drive.";
     }
   }
 
@@ -1604,18 +1670,18 @@
   async function connectDrive() {
     saveDriveSettings(false);
     if (!appSettings.googleClientId) {
-      renderDriveStatus("Setup needed: add a Google OAuth client ID.");
-      showToast("Add a Google OAuth client ID first.");
+      renderDriveStatus("Setup needed: add the Drive client ID in Advanced Drive setup.");
+      showToast("Add the Drive client ID first.");
       return;
     }
     if (!isValidGoogleClientId(appSettings.googleClientId)) {
-      renderDriveStatus("Setup needed: client ID format is invalid.");
+      renderDriveStatus("Setup needed: Drive client ID is invalid.");
       showToast("Use the full OAuth client ID.");
       return;
     }
 
     try {
-      renderDriveStatus("Opening Google authorization...");
+      renderDriveStatus("Opening Google Drive connection...");
       await requestDriveAccessToken(appSettings.driveRemembered ? "" : "consent");
       rememberDriveConnection();
       renderDriveStatus();
@@ -1626,7 +1692,7 @@
     } catch (error) {
       console.error(error);
       driveAccessToken = "";
-      renderDriveStatus("Google authorization was cancelled or failed.");
+      renderDriveStatus("Google Drive connection was cancelled or failed.");
       showToast("Google Drive connection failed.");
     }
   }
@@ -1639,13 +1705,13 @@
   async function ensureDriveAccess(actionLabel) {
     if (driveAccessToken) return true;
     if (!isValidGoogleClientId(appSettings.googleClientId)) {
-      renderDriveStatus("Setup needed: client ID format is invalid.");
+      renderDriveStatus("Setup needed: Drive client ID is invalid.");
       showToast("Use the full OAuth client ID.");
       return false;
     }
 
     try {
-      renderDriveStatus(`Google authorization needed for ${actionLabel}...`);
+      renderDriveStatus(`Google confirmation needed for ${actionLabel}...`);
       await requestDriveAccessToken(appSettings.driveRemembered ? "" : "consent");
       rememberDriveConnection();
       renderDriveStatus();
@@ -1653,8 +1719,8 @@
     } catch (error) {
       console.error(error);
       driveAccessToken = "";
-      renderDriveStatus("Google authorization was cancelled or expired.");
-      showToast("Google Drive authorization needed.");
+      renderDriveStatus("Google Drive confirmation was cancelled or expired.");
+      showToast("Google Drive connection needed.");
       return false;
     }
   }
@@ -1664,8 +1730,8 @@
     if (!driveAccessToken) {
       renderDriveStatus(
         appSettings.driveRemembered
-          ? "Auto-sync paused after refresh: click Sync now or Authorize Drive."
-          : "Auto-sync needs Drive authorization."
+          ? "Auto-sync paused after refresh: click Upload to Drive or Connect Drive."
+          : "Auto-sync needs Drive connection."
       );
       return;
     }
@@ -1711,11 +1777,11 @@
   async function saveInvoiceArtifactsToDrive(invoice) {
     saveDriveSettings(false);
     if (!appSettings.googleClientId) {
-      renderDriveStatus("Setup needed: add a Google OAuth client ID.");
+      renderDriveStatus("Setup needed: add the Drive client ID in Advanced Drive setup.");
       return false;
     }
     if (!isValidGoogleClientId(appSettings.googleClientId)) {
-      renderDriveStatus("Setup needed: client ID format is invalid.");
+      renderDriveStatus("Setup needed: Drive client ID is invalid.");
       return false;
     }
 
@@ -1730,6 +1796,34 @@
     } catch (error) {
       console.error(error);
       renderDriveStatus("Drive upload failed. Local invoice stayed saved.");
+      return false;
+    }
+  }
+
+  async function saveBatchInvoiceArtifactsToDrive(invoices) {
+    saveDriveSettings(false);
+    if (!invoices.length) return false;
+    if (!appSettings.googleClientId) {
+      renderDriveStatus("Setup needed: add the Drive client ID in Advanced Drive setup.");
+      return false;
+    }
+    if (!isValidGoogleClientId(appSettings.googleClientId)) {
+      renderDriveStatus("Setup needed: Drive client ID is invalid.");
+      return false;
+    }
+
+    try {
+      if (!(await ensureDriveAccess("saving utility invoices"))) return false;
+      renderDriveStatus("Uploading app data and utility PDFs to Drive...");
+      await uploadDriveState();
+      for (const invoice of invoices) {
+        await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
+      }
+      renderDriveStatus(`Saved ${invoices.length} invoice PDF${invoices.length === 1 ? "" : "s"} to Drive.`);
+      return true;
+    } catch (error) {
+      console.error(error);
+      renderDriveStatus("Drive upload failed. Local invoices stayed saved.");
       return false;
     }
   }
@@ -1971,7 +2065,7 @@
 
     if (response.status === 401) {
       driveAccessToken = "";
-      renderDriveStatus("Drive authorization expired. Reconnect.");
+      renderDriveStatus("Drive connection expired. Click Connect Drive.");
     }
 
     if (!response.ok) {

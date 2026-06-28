@@ -177,7 +177,7 @@ button {
 
 .nav-tabs {
   display: inline-grid;
-  grid-template-columns: repeat(5, minmax(92px, 1fr));
+  grid-template-columns: repeat(6, minmax(86px, 1fr));
   justify-self: end;
   min-height: var(--tap);
   border: 1px solid var(--line);
@@ -341,13 +341,6 @@ button {
   gap: 10px;
 }
 
-.header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .eyebrow {
   margin: 0 0 6px;
   color: var(--accent);
@@ -405,10 +398,6 @@ label {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
-}
-
-.workflow-type-field {
-  display: none;
 }
 
 .file-import-button {
@@ -475,6 +464,10 @@ button:focus-visible {
   gap: 8px;
 }
 
+.charge-actions .small-button {
+  white-space: nowrap;
+}
+
 .section-heading.compact {
   padding: 0 0 8px;
   border-bottom: 1px solid var(--line);
@@ -516,6 +509,13 @@ button:focus-visible {
   font-size: 0.88rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.utility-result.secondary {
+  min-height: 0;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 0.82rem;
 }
 
 .line-item {
@@ -786,9 +786,9 @@ button:focus-visible {
   padding-top: 18px;
 }
 
-.history-band {
-  max-width: 1460px;
-  margin: 24px auto 0;
+.view-invoices .panel {
+  max-width: 1040px;
+  margin: 0 auto;
 }
 
 .invoice-history,
@@ -796,6 +796,11 @@ button:focus-visible {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+}
+
+.invoices-page-list {
+  margin-top: 0;
+  padding: 8px 22px 22px;
 }
 
 .tenant-section {
@@ -917,6 +922,26 @@ button:focus-visible {
   font-size: 0.95rem;
 }
 
+.advanced-settings {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0;
+  background: var(--surface-muted);
+}
+
+.advanced-settings summary {
+  min-height: var(--tap);
+  padding: 12px 14px;
+  color: var(--brand);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.advanced-settings label,
+.advanced-settings .field-help {
+  margin: 0 14px 14px;
+}
+
 .empty-state {
   border: 1px dashed #cdd4cc;
   border-radius: var(--radius);
@@ -976,7 +1001,21 @@ button:focus-visible {
   .nav-tabs {
     grid-area: tabs;
     width: 100%;
-    overflow-x: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: hidden;
+  }
+
+  .nav-tab {
+    border-bottom: 1px solid var(--line);
+    padding: 0 8px;
+  }
+
+  .nav-tab:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .nav-tab:nth-last-child(-n + 3) {
+    border-bottom: 0;
   }
 
   .main {
@@ -988,6 +1027,15 @@ button:focus-visible {
   .metric-grid {
     padding-left: 16px;
     padding-right: 16px;
+  }
+
+  .view-invoices .panel-header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .view-invoices .panel-header .small-button {
+    justify-self: stretch;
   }
 
   .grid.two,
@@ -1054,7 +1102,7 @@ button:focus-visible {
   }
 
   .nav-tabs {
-    grid-template-columns: repeat(5, minmax(78px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .nav-tab {
@@ -1082,7 +1130,7 @@ button:focus-visible {
   .topbar,
   .splash-screen,
   .editor-panel,
-  .history-band,
+  .view-invoices,
   .panel-header,
   .toast {
     display: none !important;

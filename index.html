@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v22" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v23" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v22" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v23" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v22</strong>
+              <strong id="splashVersion">rent-ledger-v23</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -47,6 +47,7 @@
           <button class="nav-tab is-active" data-view="overview" type="button">Overview</button>
           <button class="nav-tab" data-view="rent" type="button">Rent</button>
           <button class="nav-tab" data-view="utility" type="button">Utilities</button>
+          <button class="nav-tab" data-view="invoices" type="button">Invoices</button>
           <button class="nav-tab" data-view="tenants" type="button">Tenants</button>
           <button class="nav-tab" data-view="settings" type="button">Settings</button>
         </nav>
@@ -145,37 +146,31 @@
                 </div>
                 <div class="invoice-header-tools">
                   <span class="status-pill" id="invoiceStatus">Not saved</span>
-                  <div class="header-actions">
-                    <button class="small-button" id="newInvoice" type="button">Start new</button>
-                    <button class="small-button" id="markPaid" type="button">Mark paid</button>
-                  </div>
                 </div>
               </div>
 
               <form id="invoiceForm" class="stack">
+                <div class="section-heading compact">
+                  <h2>Invoice details</h2>
+                  <button class="small-button" id="newInvoice" type="button">Start new</button>
+                </div>
+                <input id="invoiceType" name="invoiceType" type="hidden" value="rent" />
                 <div class="grid three">
                   <label>
                     Tenant
                     <select id="tenantSelect" name="tenantId"></select>
                   </label>
-                  <label class="workflow-type-field">
-                    Invoice type
-                    <select id="invoiceType" name="invoiceType">
-                      <option value="rent">Rent invoice</option>
-                      <option value="utility">Utility invoice</option>
-                    </select>
-                  </label>
                   <label>
                     Invoice #
                     <input id="invoiceNumber" name="invoiceNumber" type="text" autocomplete="off" />
                   </label>
-                </div>
-
-                <div class="grid three">
                   <label>
                     Issue date
                     <input id="issueDate" name="issueDate" type="date" />
                   </label>
+                </div>
+
+                <div class="grid two">
                   <label>
                     Due date
                     <input id="dueDate" name="dueDate" type="date" />
@@ -192,7 +187,10 @@
                       <p class="eyebrow">Utilities</p>
                       <h2 id="utilityCalcHeading">Utility Allocation</h2>
                     </div>
-                    <button class="small-button" id="applyUtilityCharge" type="button">Apply charge</button>
+                    <div class="charge-actions">
+                      <button class="small-button" id="applyUtilityCharge" type="button">Apply charge</button>
+                      <button class="small-button" id="batchUtilityInvoices" type="button">Create all utilities</button>
+                    </div>
                   </div>
 
                   <div class="grid three">
@@ -233,6 +231,7 @@
                   </div>
 
                   <div class="utility-result" id="utilityCalcResult">Enter bills and units to calculate a utility share.</div>
+                  <div class="utility-result secondary" id="utilityBatchSummary"></div>
                 </section>
 
                 <div class="section-heading">
@@ -286,12 +285,19 @@
             </section>
           </div>
 
-          <section class="history-band">
-            <div class="section-heading">
-              <h2>Saved Invoices</h2>
-              <button class="small-button danger" id="clearPaid" type="button">Clear paid</button>
+        </section>
+
+        <section class="view view-invoices" id="view-invoices" aria-labelledby="invoicesHeading">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Invoice records</p>
+                <h1 id="invoicesHeading">Invoices</h1>
+                <p class="panel-copy">Review saved invoices, reopen prior invoices, or mark paid invoices.</p>
+              </div>
+              <button class="small-button danger" id="clearPaid" type="button">Delete paid invoices</button>
             </div>
-            <div class="invoice-history" id="invoiceHistory"></div>
+            <div class="invoice-history invoices-page-list" id="invoiceHistory"></div>
           </section>
         </section>
 
@@ -454,39 +460,42 @@
               <div class="backup-tools drive-tools">
                 <div>
                   <p class="eyebrow">Cloud backup</p>
-                  <h2>Google Drive Sync</h2>
+                  <h2>Google Drive</h2>
                   <p class="backup-copy">
-                    Saves app data as rent-ledger-state.json and invoice PDFs in a Rent Ledger folder.
+                    Connected Drive saves app data and invoice PDFs in a Rent Ledger folder.
                   </p>
                 </div>
-                <label>
-                  Google OAuth client ID
-                  <input
-                    id="googleClientId"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="1234567890-abc.apps.googleusercontent.com"
-                  />
-                </label>
-                <p class="field-help">
-                  Paste the full Web application OAuth client ID. Do not use a project ID, API key, email address, or client secret.
-                </p>
-                <label class="checkbox-row">
-                  <input id="driveAutoSync" type="checkbox" />
-                  <span>Auto-sync changes while connected</span>
-                </label>
                 <div class="backup-status">
-                  <span>Drive status</span>
+                  <span>Connection</span>
                   <strong id="driveStatus">Not connected</strong>
                 </div>
                 <div class="button-row">
-                  <button class="secondary-button" id="connectDrive" type="button">Authorize Drive</button>
-                  <button class="secondary-button" id="loadDriveState" type="button">Load cloud data</button>
-                  <button class="secondary-button" id="saveDriveState" type="button">Sync now</button>
+                  <button class="secondary-button" id="connectDrive" type="button">Connect Drive</button>
+                  <button class="secondary-button" id="loadDriveState" type="button">Download from Drive</button>
+                  <button class="secondary-button" id="saveDriveState" type="button">Upload to Drive</button>
                 </div>
                 <p class="field-help">
-                  These actions save the connection fields first. Authorize Drive grants temporary Google access. Sync now uploads this browser's data. Load cloud data replaces this browser's data with the Drive copy.
+                  Download replaces this browser's data after confirmation. Upload sends this browser's current data to Drive.
                 </p>
+                <details class="advanced-settings">
+                  <summary>Advanced Drive setup</summary>
+                  <label>
+                    Google OAuth client ID
+                    <input
+                      id="googleClientId"
+                      type="text"
+                      autocomplete="off"
+                      placeholder="1234567890-abc.apps.googleusercontent.com"
+                    />
+                  </label>
+                  <p class="field-help">
+                    Paste the full Web application OAuth client ID. Do not use a project ID, API key, email address, or client secret.
+                  </p>
+                  <label class="checkbox-row">
+                    <input id="driveAutoSync" type="checkbox" />
+                    <span>Automatically upload app data after local changes</span>
+                  </label>
+                </details>
               </div>
             </section>
           </div>
@@ -496,6 +505,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v22" defer></script>
+    <script src="app.js?v=rent-ledger-v23" defer></script>
   </body>
 </html>

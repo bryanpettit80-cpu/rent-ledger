@@ -125,7 +125,7 @@ try {
       invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
       saveState: document.getElementById("saveState")?.textContent?.trim(),
       startNewText: document.getElementById("newInvoice")?.textContent?.trim(),
-      markPaidDisabled: document.getElementById("markPaid")?.disabled,
+      markPaidExists: Boolean(document.getElementById("markPaid")),
       invoiceNumber: document.getElementById("invoiceNumber")?.value,
       billingPeriod: document.getElementById("billingPeriod")?.value,
       utilityHidden: utility?.hidden,
@@ -146,7 +146,7 @@ try {
   assert(rentState.invoiceStatus === "Not saved", `Expected Not saved status, got ${rentState.invoiceStatus}.`);
   assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
   assert(rentState.startNewText === "Start new", `Expected Start new button, got ${rentState.startNewText}.`);
-  assert(rentState.markPaidDisabled, "Mark paid should be disabled before save.");
+  assert(!rentState.markPaidExists, "Mark paid should not appear in the invoice editor header.");
   assert(
     expectedRentInvoiceNumber.test(rentState.invoiceNumber || ""),
     `Expected rent invoice number to match ${expectedRentInvoiceNumber}, got ${rentState.invoiceNumber}.`
@@ -188,6 +188,8 @@ try {
       utilityDisplay: utility ? getComputedStyle(utility).display : "",
       applyRentHidden: document.getElementById("applyRentCharge")?.hidden,
       applyRentDisplay: getComputedStyle(document.getElementById("applyRentCharge")).display,
+      batchButton: document.getElementById("batchUtilityInvoices")?.textContent?.trim(),
+      batchSummary: document.getElementById("utilityBatchSummary")?.textContent?.trim(),
     };
   });
   assert(utilityState.invoiceType === "utility", `Expected utility invoice, got ${utilityState.invoiceType}.`);
@@ -201,6 +203,8 @@ try {
   );
   assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
   assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
+  assert(utilityState.batchButton === "Create all utilities", `Expected utility batch button, got ${utilityState.batchButton}.`);
+  assert(utilityState.batchSummary.includes("2 utility-billable tenants"), `Unexpected batch summary: ${utilityState.batchSummary}.`);
 
   await page.evaluate(() => {
     const values = {
@@ -238,20 +242,68 @@ try {
   assert(utilityTenantSwitch.waterSewer === "60", `Expected water/sewer total to persist, got ${utilityTenantSwitch.waterSewer}.`);
   assert(utilityTenantSwitch.gas === "30", `Expected gas total to persist, got ${utilityTenantSwitch.gas}.`);
 
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.evaluate(() => {
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient() {
+            return {
+              callback: () => {},
+              requestAccessToken() {
+                this.callback({ error: "test_error" });
+              },
+            };
+          },
+        },
+      },
+    };
+  });
+  await page.click("#batchUtilityInvoices");
+  await page.waitForFunction(() => window.location.hash === "#invoices");
+  const batchState = await page.evaluate(() => ({
+    cards: [...document.querySelectorAll("#invoiceHistory .invoice-card")].map((card) => card.textContent.trim()),
+    invoiceNumbers: [...document.querySelectorAll("#invoiceHistory .invoice-card h3")].map((heading) =>
+      heading.textContent.trim().split(" ")[0]
+    ),
+    driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
+    buttons: [...document.querySelectorAll("#invoiceHistory [data-toggle-paid-invoice]")].map((button) =>
+      button.textContent.trim()
+    ),
+  }));
+  assert(batchState.cards.length === 2, `Expected 2 generated utility invoices, got ${batchState.cards.length}.`);
+  assert(
+    batchState.invoiceNumbers.every((number) => expectedUtilityInvoiceNumber.test(number)),
+    `Batch utility invoice numbers did not match ${expectedUtilityInvoiceNumber}: ${batchState.invoiceNumbers.join(", ")}.`
+  );
+  assert(batchState.buttons.every((label) => label === "Mark paid"), `Expected Mark paid buttons, got ${batchState.buttons.join("|")}.`);
+  assert(
+    batchState.driveStatus === "Google Drive confirmation was cancelled or expired.",
+    `Unexpected batch Drive status: ${batchState.driveStatus}.`
+  );
+
+  await page.click("#invoiceHistory [data-toggle-paid-invoice]");
+  const paidState = await page.evaluate(() => ({
+    firstCardText: document.querySelector("#invoiceHistory .invoice-card")?.textContent.trim(),
+    firstToggle: document.querySelector("#invoiceHistory [data-toggle-paid-invoice]")?.textContent.trim(),
+  }));
+  assert(paidState.firstCardText.includes("Paid"), `Expected first invoice card to show Paid: ${paidState.firstCardText}.`);
+  assert(paidState.firstToggle === "Reopen", `Expected Reopen after marking paid, got ${paidState.firstToggle}.`);
+
   await page.click('[data-view="settings"]');
   const settingsState = await page.evaluate(() => ({
     buttons: [...document.querySelectorAll(".drive-tools .button-row button")].map((button) => button.textContent.trim()),
     driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
-    help: document.querySelector(".drive-tools .field-help:last-child")?.textContent?.trim(),
+    help: document.querySelector(".drive-tools > .field-help")?.textContent?.trim(),
     hasSaveConnection: document.body.textContent.includes("Save connection settings"),
   }));
   assert(
-    settingsState.buttons.join("|") === "Authorize Drive|Load cloud data|Sync now",
+    settingsState.buttons.join("|") === "Connect Drive|Download from Drive|Upload to Drive",
     `Unexpected Drive buttons: ${settingsState.buttons.join("|")}.`
   );
   assert(!settingsState.hasSaveConnection, "Removed Save connection settings text should not be present.");
-  assert(settingsState.driveStatus === "Not connected: click Authorize Drive.", `Unexpected Drive status: ${settingsState.driveStatus}.`);
-  assert(settingsState.help.includes("These actions save the connection fields first"), "Drive help must explain settings auto-save.");
+  assert(settingsState.driveStatus === "Not connected. Click Connect Drive.", `Unexpected Drive status: ${settingsState.driveStatus}.`);
+  assert(settingsState.help.includes("Download replaces this browser's data"), "Drive help must explain Upload and Download.");
 
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";
   await page.evaluate(() => {
@@ -284,8 +336,8 @@ try {
   assert(storedSettings.googleClientId === testClientId, "Drive action should save edited client ID first.");
   assert(storedSettings.driveAutoSync === true, "Drive action should save edited auto-sync setting first.");
   assert(
-    storedSettings.driveStatus === "Google authorization was cancelled or failed.",
-    `Unexpected mocked authorization status: ${storedSettings.driveStatus}.`
+    storedSettings.driveStatus === "Google Drive connection was cancelled or failed.",
+    `Unexpected mocked connection status: ${storedSettings.driveStatus}.`
   );
 } finally {
   await context.close();

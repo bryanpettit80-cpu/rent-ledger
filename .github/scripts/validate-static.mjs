@@ -42,13 +42,18 @@ assert(files.serviceWorker.includes(`./styles.css?v=${appVersion}`), "sw.js must
 assert(files.serviceWorker.includes(`./manifest.webmanifest?v=${appVersion}`), "sw.js must cache the versioned manifest URL.");
 
 assert(files.html.includes('id="applyRentCharge"'), "Rent workflow must include the Apply charge button.");
+assert(files.html.includes('data-view="invoices"'), "Navigation must include the Invoices page.");
+assert(files.html.includes('id="batchUtilityInvoices"'), "Utility workflow must include the batch utility button.");
 assert(files.html.includes('placeholder="July 2026"'), "Billing period placeholder should use month and year.");
-assert(files.html.includes("Authorize Drive"), "Settings must include Authorize Drive.");
-assert(files.html.includes("Load cloud data"), "Settings must include Load cloud data.");
-assert(files.html.includes("Sync now"), "Settings must include Sync now.");
+assert(files.html.includes("Connect Drive"), "Settings must include Connect Drive.");
+assert(files.html.includes("Download from Drive"), "Settings must include Download from Drive.");
+assert(files.html.includes("Upload to Drive"), "Settings must include Upload to Drive.");
 assert(!files.html.includes("Save connection settings"), "Settings must not include the removed Save connection settings button.");
+assert(!files.html.includes('id="markPaid"'), "Invoice editor must not include the old header Mark paid button.");
 
 assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
+assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js must define the utility batch flow.");
+assert(files.app.includes("function setInvoicePaid"), "Saved invoices must support mark-paid/reopen actions.");
 assert(files.app.includes("function utilityCalculationForTenant"), "Utility billing should preserve shared bill totals when switching tenants.");
 assert(files.app.includes("function invoiceNumberPeriodDate"), "Generated invoice numbers must use the invoice billing month.");
 assert(files.app.includes("return `${prefix}-${year}-${month}-${String(next).padStart(4, \"0\")}`;"), "Generated invoice numbers must include the two-digit billing month.");
@@ -59,6 +64,7 @@ assert(files.serviceWorker.includes("async function networkFirst"), "sw.js shoul
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
+assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
 assert(files.readme.includes("RNT-2026-07-"), "README must document month-coded rent invoice numbers.");
 assert(files.readme.includes("UTL-2026-06-"), "README must document month-coded utility invoice numbers.");
 assert(files.readme.includes("Invoice States"), "README must document invoice states.");
