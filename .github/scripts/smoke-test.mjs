@@ -169,10 +169,19 @@ try {
   assert(!utilityState.utilityHidden && utilityState.utilityDisplay !== "none", "Utility tab must show the utility calculator.");
   assert(utilityState.applyRentHidden && utilityState.applyRentDisplay === "none", "Rent Apply charge should hide on Utility tab.");
 
-  await page.fill("#utilityTotalUnits", "3");
-  await page.fill("#utilityElectric", "120");
-  await page.fill("#utilityWaterSewer", "60");
-  await page.fill("#utilityGas", "30");
+  await page.evaluate(() => {
+    const values = {
+      utilityTotalUnits: "3",
+      utilityElectric: "120",
+      utilityWaterSewer: "60",
+      utilityGas: "30",
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const input = document.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
   await page.selectOption("#tenantSelect", "brenda");
   const utilityTenantSwitch = await page.evaluate(() => ({
     tenantId: document.getElementById("tenantSelect")?.value,
