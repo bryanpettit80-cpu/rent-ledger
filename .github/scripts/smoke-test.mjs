@@ -195,6 +195,13 @@ try {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
   });
+  await page.waitForFunction(
+    () =>
+      document.getElementById("utilityTotalUnits")?.value === "3" &&
+      document.getElementById("utilityElectric")?.value === "120" &&
+      document.getElementById("utilityWaterSewer")?.value === "60" &&
+      document.getElementById("utilityGas")?.value === "30"
+  );
   await page.selectOption("#tenantSelect", "brenda");
   const utilityTenantSwitch = await page.evaluate(() => ({
     tenantId: document.getElementById("tenantSelect")?.value,
