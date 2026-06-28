@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v7";
+  const APP_VERSION = "rent-ledger-v8";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
 
   const moneyFormatter = new Intl.NumberFormat("en-US", {

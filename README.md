@@ -129,6 +129,7 @@ In the browser print dialog:
 - Choose `Save as PDF` or `Microsoft Print to PDF` for a PDF file.
 
 The preview shown in the app is the document intended for printing.
+The print layout is compact and targets one letter-size page for normal rent, utility, and combined invoices.
 
 ## Backups
 
