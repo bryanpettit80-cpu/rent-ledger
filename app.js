@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v13";
+  const APP_VERSION = "rent-ledger-v14";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const DEFAULT_GOOGLE_CLIENT_ID =
@@ -71,6 +71,7 @@
     fillTenantForm(selectedTenantId);
     renderAll();
     registerServiceWorker();
+    autoReconnectDrive();
   }
 
   function bindElements() {
@@ -932,6 +933,7 @@
       appSettings.driveFolderId = "";
       appSettings.driveInvoiceFolderId = "";
       appSettings.driveStateFileId = "";
+      appSettings.driveRemembered = false;
     }
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
     renderDriveStatus();
@@ -956,6 +958,8 @@
       els.driveStatus.textContent = "Use the full Web application OAuth client ID.";
     } else if (connected) {
       els.driveStatus.textContent = appSettings.driveAutoSync ? "Connected. Auto-sync on." : "Connected. Auto-sync off.";
+    } else if (appSettings.driveRemembered) {
+      els.driveStatus.textContent = "Drive remembered. Reconnecting...";
     } else {
       els.driveStatus.textContent = "Ready to connect.";
     }
@@ -1186,11 +1190,16 @@
     try {
       const parsed = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || "{}");
       const storedClientId = cleanGoogleClientId(parsed.googleClientId);
+      const driveRemembered =
+        "driveRemembered" in parsed
+          ? Boolean(parsed.driveRemembered)
+          : Boolean(parsed.driveFolderId || parsed.driveInvoiceFolderId || parsed.driveStateFileId);
       return {
         googleClientId: isValidGoogleClientId(storedClientId)
           ? storedClientId
           : DEFAULT_GOOGLE_CLIENT_ID,
         driveAutoSync: Boolean(parsed.driveAutoSync),
+        driveRemembered,
         driveFolderId: String(parsed.driveFolderId || "").trim(),
         driveInvoiceFolderId: String(parsed.driveInvoiceFolderId || "").trim(),
         driveStateFileId: String(parsed.driveStateFileId || "").trim(),
@@ -1200,6 +1209,7 @@
       return {
         googleClientId: DEFAULT_GOOGLE_CLIENT_ID,
         driveAutoSync: false,
+        driveRemembered: false,
         driveFolderId: "",
         driveInvoiceFolderId: "",
         driveStateFileId: "",
@@ -1243,6 +1253,7 @@
     try {
       renderDriveStatus("Connecting to Google Drive...");
       await requestDriveAccessToken("consent");
+      rememberDriveConnection();
       renderDriveStatus();
       showToast("Google Drive connected.");
       if (appSettings.driveAutoSync) {
@@ -1254,6 +1265,27 @@
       renderDriveStatus("Google Drive connection failed.");
       showToast("Google Drive connection failed.");
     }
+  }
+
+  async function autoReconnectDrive() {
+    if (!appSettings.driveRemembered || driveAccessToken) return;
+    if (!isValidGoogleClientId(appSettings.googleClientId)) return;
+
+    try {
+      renderDriveStatus("Reconnecting to Google Drive...");
+      await requestDriveAccessToken("");
+      rememberDriveConnection();
+      renderDriveStatus();
+    } catch (error) {
+      console.warn("Silent Google Drive reconnect failed.", error);
+      driveAccessToken = "";
+      renderDriveStatus("Drive remembered. Click Connect Drive to reconnect.");
+    }
+  }
+
+  function rememberDriveConnection() {
+    appSettings.driveRemembered = true;
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
   }
 
   function queueDriveSync(reason) {
