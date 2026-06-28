@@ -2,8 +2,13 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v9";
+  const APP_VERSION = "rent-ledger-v10";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
+  const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const DRIVE_FOLDER_NAME = "Rent Ledger";
+  const DRIVE_STATE_FILE_NAME = "rent-ledger-state.json";
+  const DRIVE_SYNC_DEBOUNCE_MS = 1200;
 
   const moneyFormatter = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -40,11 +45,16 @@
   };
 
   let state = loadState();
-  let selectedTenantId = state.tenants[0]?.id || "";
+  let appSettings = loadAppSettings();
+  let selectedTenantId = firstActiveTenantId() || state.tenants[0]?.id || "";
   let selectedInvoiceId = "";
   let tenantEditorId = selectedTenantId;
   let draft = createBlankInvoice(selectedTenantId);
   let toastTimer = 0;
+  let driveAccessToken = "";
+  let driveTokenClient = null;
+  let driveSyncTimer = 0;
+  let googleIdentityLoadPromise = null;
 
   const els = {};
 
@@ -54,6 +64,7 @@
     bindElements();
     bindEvents();
     fillLandlordForm();
+    fillDriveSettingsForm();
     fillTenantForm(selectedTenantId);
     renderAll();
     registerServiceWorker();
@@ -106,6 +117,10 @@
       "tenantRent",
       "tenantUtilityUnits",
       "tenantMemo",
+      "tenantActive",
+      "inactiveTenantList",
+      "activeTenantCount",
+      "inactiveTenantCount",
       "resetTenantForm",
       "landlordForm",
       "landlordName",
@@ -124,6 +139,13 @@
       "backupCount",
       "backupLatest",
       "restoreLatestBackup",
+      "googleClientId",
+      "driveAutoSync",
+      "driveStatus",
+      "saveDriveSettings",
+      "connectDrive",
+      "loadDriveState",
+      "saveDriveState",
     ].forEach((id) => {
       els[id] = document.getElementById(id);
     });
@@ -240,17 +262,18 @@
     });
     els.deleteTenant.addEventListener("click", deleteTenant);
     els.resetTenantForm.addEventListener("click", () => fillTenantForm(tenantEditorId));
-    els.tenantList.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-edit-tenant]");
-      if (!button) return;
-      tenantEditorId = button.dataset.editTenant;
-      fillTenantForm(tenantEditorId);
-    });
+    els.tenantList.addEventListener("click", handleTenantListClick);
+    els.inactiveTenantList.addEventListener("click", handleTenantListClick);
 
     els.landlordForm.addEventListener("submit", saveLandlord);
     els.landlordPhone.addEventListener("blur", () => {
       els.landlordPhone.value = formatPhoneNumber(els.landlordPhone.value);
     });
+    els.saveDriveSettings.addEventListener("click", () => saveDriveSettings(true));
+    els.driveAutoSync.addEventListener("change", () => saveDriveSettings(false));
+    els.connectDrive.addEventListener("click", connectDrive);
+    els.loadDriveState.addEventListener("click", loadStateFromDrive);
+    els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual sync"));
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.newInvoice.addEventListener("click", startNewInvoice);
@@ -285,18 +308,35 @@
   }
 
   function renderTenantOptions() {
-    if (!state.tenants.length) {
-      els.tenantSelect.innerHTML = `<option value="">Add a tenant first</option>`;
+    const activeTenants = getActiveTenants();
+    if (!activeTenants.length) {
+      els.tenantSelect.innerHTML = `<option value="">Add an active tenant first</option>`;
+      selectedTenantId = "";
       return;
     }
 
-    els.tenantSelect.innerHTML = state.tenants
+    const selectedTenant = getTenant(selectedTenantId || draft.tenantId);
+    const includeSelectedInactive = selectedTenant && selectedTenant.active === false && selectedInvoiceId;
+    els.tenantSelect.innerHTML = activeTenants
       .map((tenant) => {
         const label = [tenant.name, tenant.unit].filter(Boolean).join(" - ");
         return `<option value="${escapeAttr(tenant.id)}">${escapeHtml(label)}</option>`;
       })
+      .concat(
+        includeSelectedInactive
+          ? [
+              `<option value="${escapeAttr(selectedTenant.id)}">${escapeHtml(
+                [selectedTenant.name, selectedTenant.unit].filter(Boolean).join(" - ")
+              )} (inactive)</option>`,
+            ]
+          : []
+      )
       .join("");
-    els.tenantSelect.value = selectedTenantId || state.tenants[0].id;
+    if (!activeTenants.some((tenant) => tenant.id === selectedTenantId) && !includeSelectedInactive) {
+      selectedTenantId = activeTenants[0].id;
+      if (!selectedInvoiceId) draft.tenantId = selectedTenantId;
+    }
+    els.tenantSelect.value = selectedTenantId || draft.tenantId || activeTenants[0].id;
   }
 
   function renderInvoiceEditor() {
@@ -544,45 +584,104 @@
   }
 
   function renderTenants() {
-    if (!state.tenants.length) {
-      els.tenantList.innerHTML = `<div class="empty-state">No tenants saved.</div>`;
-      return;
-    }
+    const activeTenants = getActiveTenants();
+    const inactiveTenants = getInactiveTenants();
+    els.activeTenantCount.textContent = String(activeTenants.length);
+    els.inactiveTenantCount.textContent = String(inactiveTenants.length);
+    els.tenantList.innerHTML = activeTenants.length
+      ? activeTenants.map(renderTenantCard).join("")
+      : `<div class="empty-state">No active tenants saved.</div>`;
+    els.inactiveTenantList.innerHTML = inactiveTenants.length
+      ? inactiveTenants.map(renderTenantCard).join("")
+      : `<div class="empty-state">No inactive tenants.</div>`;
+  }
 
-    els.tenantList.innerHTML = state.tenants
-      .map(
-        (tenant) => `
-        <article class="tenant-card">
+  function renderTenantCard(tenant) {
+    const inactive = tenant.active === false;
+    return `
+        <article class="tenant-card${inactive ? " is-inactive" : ""}">
           <div>
             <h3>${escapeHtml(tenant.name)}</h3>
             <p>${escapeHtml(tenant.unit || "No unit")} &middot; ${formatMoney(tenant.rent || 0)} rent${
-          tenant.active === false ? " &middot; Inactive" : ""
-        }</p>
+      inactive ? " &middot; Inactive" : ""
+    }</p>
           </div>
           <div class="card-actions">
             <button class="small-button" data-edit-tenant="${escapeAttr(tenant.id)}" type="button">Edit</button>
-            <button class="small-button" data-create-tenant-invoice="${escapeAttr(
-              tenant.id
-            )}" type="button">Invoice</button>
+            ${
+              inactive
+                ? `<button class="small-button" data-activate-tenant="${escapeAttr(tenant.id)}" type="button">Make active</button>`
+                : `<button class="small-button" data-create-tenant-invoice="${escapeAttr(
+                    tenant.id
+                  )}" type="button">Invoice</button>
+                   <button class="small-button" data-deactivate-tenant="${escapeAttr(
+                     tenant.id
+                   )}" type="button">Make inactive</button>`
+            }
           </div>
-        </article>`
-      )
-      .join("");
+        </article>`;
+  }
 
-    els.tenantList.querySelectorAll("[data-create-tenant-invoice]").forEach((button) => {
-      button.addEventListener("click", () => {
-        selectedTenantId = button.dataset.createTenantInvoice;
-        startNewInvoice("rent");
-        setView("invoice");
-      });
-    });
+  function handleTenantListClick(event) {
+    const editButton = event.target.closest("[data-edit-tenant]");
+    const invoiceButton = event.target.closest("[data-create-tenant-invoice]");
+    const activateButton = event.target.closest("[data-activate-tenant]");
+    const deactivateButton = event.target.closest("[data-deactivate-tenant]");
+
+    if (editButton) {
+      tenantEditorId = editButton.dataset.editTenant;
+      fillTenantForm(tenantEditorId);
+      return;
+    }
+
+    if (invoiceButton) {
+      selectedTenantId = invoiceButton.dataset.createTenantInvoice;
+      startNewInvoice("rent");
+      setView("invoice");
+      return;
+    }
+
+    if (activateButton) {
+      setTenantActive(activateButton.dataset.activateTenant, true);
+      return;
+    }
+
+    if (deactivateButton) {
+      setTenantActive(deactivateButton.dataset.deactivateTenant, false);
+    }
+  }
+
+  function setTenantActive(id, active) {
+    const tenant = state.tenants.find((item) => item.id === id);
+    if (!tenant) return;
+    tenant.active = active;
+    if (!active && selectedTenantId === id && !selectedInvoiceId) {
+      selectedTenantId = firstActiveTenantId() || "";
+      draft = createBlankInvoice(selectedTenantId);
+    }
+    if (tenantEditorId === id) fillTenantForm(id);
+    saveState(active ? "Activated tenant" : "Deactivated tenant");
+    renderAll();
+    showToast(`${tenant.name} marked ${active ? "active" : "inactive"}.`);
+  }
+
+  function getActiveTenants() {
+    return state.tenants.filter((tenant) => tenant.active !== false);
+  }
+
+  function getInactiveTenants() {
+    return state.tenants.filter((tenant) => tenant.active === false);
+  }
+
+  function firstActiveTenantId() {
+    return getActiveTenants()[0]?.id || "";
   }
 
   function renderMetrics() {
     const openInvoices = state.invoices.filter((invoice) => invoice.status !== "paid");
     const paidInvoices = state.invoices.filter((invoice) => invoice.status === "paid");
     const openBalance = openInvoices.reduce((total, invoice) => total + calculateTotal(invoice), 0);
-    els.metricTenants.textContent = String(state.tenants.length);
+    els.metricTenants.textContent = String(getActiveTenants().length);
     els.metricOpen.textContent = String(openInvoices.length);
     els.metricBalance.textContent = formatMoney(openBalance);
     els.metricPaid.textContent = String(paidInvoices.length);
@@ -618,7 +717,9 @@
 
   function startNewInvoice(invoiceType = draft?.invoiceType || "rent") {
     selectedInvoiceId = "";
-    draft = createBlankInvoice(selectedTenantId || state.tenants[0]?.id || "", invoiceType);
+    const tenantId = getTenant(selectedTenantId)?.active === false ? firstActiveTenantId() : selectedTenantId || firstActiveTenantId();
+    selectedTenantId = tenantId || "";
+    draft = createBlankInvoice(selectedTenantId, invoiceType);
     renderInvoiceEditor();
     renderInvoicePreview();
     showToast("New invoice ready.");
@@ -697,7 +798,7 @@
       phone: formatPhoneNumber(els.tenantPhone.value),
       rent: toNumber(els.tenantRent.value),
       utilityUnits: toNumber(els.tenantUtilityUnits.value),
-      active: existingTenant?.active ?? true,
+      active: els.tenantActive.checked,
       payments: existingTenant?.payments || [],
       memo: els.tenantMemo.value.trim(),
     };
@@ -714,9 +815,16 @@
       state.tenants.push(tenant);
     }
 
-    selectedTenantId = id;
     tenantEditorId = id;
-    if (!draft.tenantId) draft.tenantId = id;
+    if (tenant.active) {
+      selectedTenantId = id;
+      if (!draft.tenantId) draft.tenantId = id;
+    } else {
+      selectedTenantId = firstActiveTenantId() || "";
+      if (!selectedInvoiceId && draft.tenantId === id) {
+        draft = createBlankInvoice(selectedTenantId);
+      }
+    }
     saveState("Saved tenant");
     fillTenantForm(id);
     renderAll();
@@ -733,6 +841,7 @@
       phone: "",
       rent: "",
       utilityUnits: 1,
+      active: true,
       memo: "",
     };
     tenantEditorId = tenant.id;
@@ -745,6 +854,7 @@
     els.tenantRent.value = normalizeNumberInput(tenant.rent);
     els.tenantUtilityUnits.value = normalizeNumberInput(tenant.utilityUnits || 1);
     els.tenantMemo.value = tenant.memo || "";
+    els.tenantActive.checked = tenant.active !== false;
     els.tenantFormHeading.textContent = tenant.id ? "Tenant Profile" : "New Tenant";
     els.deleteTenant.disabled = !tenant.id;
   }
@@ -759,7 +869,7 @@
     }
     if (!window.confirm("Delete this tenant?")) return;
     state.tenants = state.tenants.filter((tenant) => tenant.id !== id);
-    if (selectedTenantId === id) selectedTenantId = state.tenants[0]?.id || "";
+    if (selectedTenantId === id) selectedTenantId = firstActiveTenantId() || "";
     tenantEditorId = selectedTenantId;
     if (draft.tenantId === id) draft = createBlankInvoice(selectedTenantId);
     saveState("Deleted tenant");
@@ -788,6 +898,51 @@
     saveState("Saved settings");
     renderInvoicePreview();
     showToast("Settings saved.");
+  }
+
+  function fillDriveSettingsForm() {
+    els.googleClientId.value = appSettings.googleClientId || "";
+    els.driveAutoSync.checked = Boolean(appSettings.driveAutoSync);
+    renderDriveStatus();
+  }
+
+  function saveDriveSettings(showMessage) {
+    const previousClientId = appSettings.googleClientId;
+    const nextClientId = els.googleClientId.value.trim();
+    appSettings = {
+      ...appSettings,
+      googleClientId: nextClientId,
+      driveAutoSync: els.driveAutoSync.checked,
+    };
+    if (previousClientId !== nextClientId) {
+      driveAccessToken = "";
+      driveTokenClient = null;
+      appSettings.driveFolderId = "";
+      appSettings.driveStateFileId = "";
+    }
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    renderDriveStatus();
+    if (!appSettings.driveAutoSync) clearTimeout(driveSyncTimer);
+    if (appSettings.driveAutoSync && driveAccessToken) queueDriveSync("Enabled Drive auto-sync");
+    if (showMessage) showToast("Drive settings saved.");
+  }
+
+  function renderDriveStatus(message) {
+    if (!els.driveStatus) return;
+    const hasClientId = Boolean(appSettings.googleClientId);
+    const connected = Boolean(driveAccessToken);
+    els.connectDrive.disabled = !hasClientId;
+    els.loadDriveState.disabled = !connected;
+    els.saveDriveState.disabled = !connected;
+    if (message) {
+      els.driveStatus.textContent = message;
+    } else if (!hasClientId) {
+      els.driveStatus.textContent = "Add a Google OAuth client ID.";
+    } else if (connected) {
+      els.driveStatus.textContent = appSettings.driveAutoSync ? "Connected. Auto-sync on." : "Connected. Auto-sync off.";
+    } else {
+      els.driveStatus.textContent = "Ready to connect.";
+    }
   }
 
   function syncDraftFromForm() {
@@ -1011,10 +1166,31 @@
     }
   }
 
+  function loadAppSettings() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || "{}");
+      return {
+        googleClientId: String(parsed.googleClientId || "").trim(),
+        driveAutoSync: Boolean(parsed.driveAutoSync),
+        driveFolderId: String(parsed.driveFolderId || "").trim(),
+        driveStateFileId: String(parsed.driveStateFileId || "").trim(),
+      };
+    } catch (error) {
+      console.warn("Unable to load Rent Ledger settings.", error);
+      return {
+        googleClientId: "",
+        driveAutoSync: false,
+        driveFolderId: "",
+        driveStateFileId: "",
+      };
+    }
+  }
+
   function saveState(reason = "Saved data") {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     recordLocalBackup(reason, state);
     renderBackupStatus();
+    queueDriveSync(reason);
   }
 
   function exportBackup() {
@@ -1028,6 +1204,283 @@
     link.remove();
     URL.revokeObjectURL(url);
     showToast("Backup exported.");
+  }
+
+  async function connectDrive() {
+    saveDriveSettings(false);
+    if (!appSettings.googleClientId) {
+      renderDriveStatus("Add a Google OAuth client ID.");
+      showToast("Add a Google OAuth client ID first.");
+      return;
+    }
+
+    try {
+      renderDriveStatus("Connecting to Google Drive...");
+      await requestDriveAccessToken("consent");
+      renderDriveStatus();
+      showToast("Google Drive connected.");
+      if (appSettings.driveAutoSync) {
+        queueDriveSync("Initial state");
+      }
+    } catch (error) {
+      console.error(error);
+      driveAccessToken = "";
+      renderDriveStatus("Google Drive connection failed.");
+      showToast("Google Drive connection failed.");
+    }
+  }
+
+  function queueDriveSync(reason) {
+    if (!appSettings.driveAutoSync) return;
+    if (!driveAccessToken) {
+      renderDriveStatus("Connect Drive to sync changes.");
+      return;
+    }
+    clearTimeout(driveSyncTimer);
+    driveSyncTimer = window.setTimeout(() => {
+      saveStateToDrive(reason).catch((error) => {
+        console.error(error);
+        renderDriveStatus("Drive sync failed. Local save kept.");
+      });
+    }, DRIVE_SYNC_DEBOUNCE_MS);
+  }
+
+  async function saveStateToDrive(reason = "Saved") {
+    if (!driveAccessToken) {
+      renderDriveStatus("Connect Drive before saving.");
+      showToast("Connect Google Drive first.");
+      return;
+    }
+
+    try {
+      renderDriveStatus("Saving to Google Drive...");
+      await uploadDriveState();
+      renderDriveStatus(`${reason} synced to Drive.`);
+      showToast("Saved to Google Drive.");
+    } catch (error) {
+      if (String(error.message || error).includes("404")) {
+        appSettings.driveStateFileId = "";
+        localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+        try {
+          await uploadDriveState();
+          renderDriveStatus(`${reason} synced to Drive.`);
+          showToast("Saved to Google Drive.");
+        } catch (retryError) {
+          console.error(retryError);
+          renderDriveStatus("Drive save failed. Local save kept.");
+          showToast("Google Drive save failed.");
+        }
+        return;
+      }
+      console.error(error);
+      renderDriveStatus("Drive save failed. Local save kept.");
+      showToast("Google Drive save failed.");
+    }
+  }
+
+  async function loadStateFromDrive() {
+    if (!driveAccessToken) {
+      renderDriveStatus("Connect Drive before loading.");
+      showToast("Connect Google Drive first.");
+      return;
+    }
+
+    if (!window.confirm("Load Rent Ledger data from Google Drive and replace this browser's local data?")) {
+      return;
+    }
+
+    try {
+      renderDriveStatus("Loading from Google Drive...");
+      const folderId = await ensureDriveFolder();
+      const file = await findDriveFile(DRIVE_STATE_FILE_NAME, "application/json", folderId);
+      if (!file) {
+        renderDriveStatus("No Drive state file found.");
+        showToast("No Drive backup found.");
+        return;
+      }
+
+      appSettings.driveStateFileId = file.id;
+      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+      const imported = await driveApi(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+      recordLocalBackup("Before Drive load", state);
+      state = normalizeState(imported);
+      selectedTenantId = firstActiveTenantId() || "";
+      selectedInvoiceId = "";
+      draft = createBlankInvoice(selectedTenantId);
+      saveState("Loaded from Google Drive");
+      fillLandlordForm();
+      fillTenantForm(selectedTenantId);
+      renderAll();
+      renderDriveStatus("Loaded from Google Drive.");
+      showToast("Loaded from Google Drive.");
+    } catch (error) {
+      console.error(error);
+      renderDriveStatus("Drive load failed.");
+      showToast("Google Drive load failed.");
+    }
+  }
+
+  async function uploadDriveState() {
+    const folderId = await ensureDriveFolder();
+    let fileId = appSettings.driveStateFileId;
+    if (!fileId) {
+      const existing = await findDriveFile(DRIVE_STATE_FILE_NAME, "application/json", folderId);
+      fileId = existing?.id || "";
+    }
+
+    const body = JSON.stringify(state, null, 2);
+    if (fileId) {
+      await driveApi(`/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,modifiedTime`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      appSettings.driveStateFileId = fileId;
+      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+      return;
+    }
+
+    const upload = multipartDriveBody(
+      {
+        name: DRIVE_STATE_FILE_NAME,
+        mimeType: "application/json",
+        parents: [folderId],
+      },
+      body
+    );
+    const created = await driveApi("/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime", {
+      method: "POST",
+      headers: { "Content-Type": upload.contentType },
+      body: upload.body,
+    });
+    appSettings.driveStateFileId = created.id || "";
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+  }
+
+  async function ensureDriveFolder() {
+    if (appSettings.driveFolderId) return appSettings.driveFolderId;
+
+    const existing = await findDriveFile(DRIVE_FOLDER_NAME, "application/vnd.google-apps.folder");
+    if (existing?.id) {
+      appSettings.driveFolderId = existing.id;
+      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+      return existing.id;
+    }
+
+    const created = await driveApi("/drive/v3/files?fields=id,name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: DRIVE_FOLDER_NAME,
+        mimeType: "application/vnd.google-apps.folder",
+      }),
+    });
+    appSettings.driveFolderId = created.id || "";
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    return appSettings.driveFolderId;
+  }
+
+  async function findDriveFile(name, mimeType, parentId = "") {
+    const clauses = [`name = ${driveQueryLiteral(name)}`, "trashed = false"];
+    if (mimeType) clauses.push(`mimeType = ${driveQueryLiteral(mimeType)}`);
+    if (parentId) clauses.push(`${driveQueryLiteral(parentId)} in parents`);
+    const params = new URLSearchParams({
+      q: clauses.join(" and "),
+      spaces: "drive",
+      pageSize: "1",
+      fields: "files(id,name,mimeType,modifiedTime)",
+    });
+    const result = await driveApi(`/drive/v3/files?${params.toString()}`);
+    return result.files?.[0] || null;
+  }
+
+  function driveQueryLiteral(value) {
+    return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  }
+
+  async function requestDriveAccessToken(prompt = "") {
+    await loadGoogleIdentityServices();
+    return new Promise((resolve, reject) => {
+      if (!driveTokenClient) {
+        driveTokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: appSettings.googleClientId,
+          scope: DRIVE_SCOPE,
+          callback: () => {},
+          error_callback: reject,
+        });
+      }
+
+      driveTokenClient.callback = (response) => {
+        if (response.error) {
+          reject(new Error(response.error));
+          return;
+        }
+        driveAccessToken = response.access_token || "";
+        resolve(driveAccessToken);
+      };
+      driveTokenClient.requestAccessToken({ prompt });
+    });
+  }
+
+  function loadGoogleIdentityServices() {
+    if (window.google?.accounts?.oauth2) return Promise.resolve();
+    if (googleIdentityLoadPromise) return googleIdentityLoadPromise;
+
+    googleIdentityLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        if (window.google?.accounts?.oauth2) resolve();
+        else reject(new Error("Google Identity Services did not load."));
+      };
+      script.onerror = () => reject(new Error("Unable to load Google Identity Services."));
+      document.head.appendChild(script);
+    });
+    return googleIdentityLoadPromise;
+  }
+
+  async function driveApi(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    headers.set("Authorization", `Bearer ${driveAccessToken}`);
+    const response = await fetch(`https://www.googleapis.com${path}`, {
+      ...options,
+      headers,
+    });
+
+    if (response.status === 401) {
+      driveAccessToken = "";
+      renderDriveStatus("Drive authorization expired. Reconnect.");
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Drive API ${response.status}: ${body}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) return response.json();
+    return response.text();
+  }
+
+  function multipartDriveBody(metadata, media) {
+    const boundary = `rent-ledger-${Date.now()}`;
+    return {
+      contentType: `multipart/related; boundary=${boundary}`,
+      body: [
+        `--${boundary}`,
+        "Content-Type: application/json; charset=UTF-8",
+        "",
+        JSON.stringify(metadata),
+        `--${boundary}`,
+        "Content-Type: application/json",
+        "",
+        media,
+        `--${boundary}--`,
+        "",
+      ].join("\r\n"),
+    };
   }
 
   function importBackup(event) {
@@ -1049,7 +1502,7 @@
             ...state,
             tenants: mergeImportedTenants(currentImportBaseTenants(), tenantImport),
           });
-          selectedTenantId = state.tenants[0]?.id || "";
+          selectedTenantId = firstActiveTenantId() || "";
           selectedInvoiceId = "";
           draft = createBlankInvoice(selectedTenantId);
           saveState("Imported tenants");
@@ -1066,7 +1519,7 @@
         }
         recordLocalBackup("Before import", state);
         state = normalizeState(imported);
-        selectedTenantId = state.tenants[0]?.id || "";
+        selectedTenantId = firstActiveTenantId() || "";
         selectedInvoiceId = "";
         draft = createBlankInvoice(selectedTenantId);
         saveState("Imported backup");
@@ -1208,7 +1661,7 @@
     if (!window.confirm(`Restore the latest local backup from ${label}?`)) return;
     recordLocalBackup("Before local restore", state);
     state = normalizeState(latest.data);
-    selectedTenantId = state.tenants[0]?.id || "";
+    selectedTenantId = firstActiveTenantId() || "";
     selectedInvoiceId = "";
     draft = createBlankInvoice(selectedTenantId);
     saveState("Restored local backup");
@@ -1274,6 +1727,7 @@
     return {
       ...tenant,
       phone: formatPhoneNumber(tenant?.phone),
+      active: tenant?.active === false ? false : true,
       utilityUnits: toNumber(tenant?.utilityUnits || 1),
       utilities: toNumber(tenant?.utilities),
     };

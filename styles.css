@@ -295,6 +295,23 @@ button:focus-visible {
   gap: 12px;
 }
 
+.section-heading.compact {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-heading.compact h2 {
+  color: var(--accent);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.section-heading.compact span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .line-items {
   display: grid;
   gap: 10px;
@@ -407,6 +424,28 @@ button:focus-visible {
 
 .small-button.danger {
   color: var(--danger);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.small-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand);
 }
 
 .status-pill,
@@ -579,6 +618,14 @@ button:focus-visible {
   margin-top: 12px;
 }
 
+.tenant-section {
+  padding: 16px 22px 0;
+}
+
+.tenant-section:last-child {
+  padding-bottom: 22px;
+}
+
 .invoice-card,
 .tenant-card {
   display: grid;
@@ -589,6 +636,10 @@ button:focus-visible {
   border-radius: var(--radius);
   padding: 14px;
   background: var(--surface);
+}
+
+.tenant-card.is-inactive {
+  background: var(--surface-muted);
 }
 
 .invoice-card h3,
@@ -653,6 +704,11 @@ button:focus-visible {
   display: grid;
   gap: 14px;
   padding: 6px 22px 22px;
+}
+
+.drive-tools {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
 }
 
 .backup-copy {

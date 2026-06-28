@@ -19,6 +19,8 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Saves invoice history in the current browser.
 - Exports full JSON backups and imports tenant-only JSON files.
 - Keeps a rolling local backup history in browser storage.
+- Separates active and inactive tenants.
+- Optionally syncs the app state to Google Drive after Google Drive is connected.
 - Works on mobile and desktop screen sizes.
 - Installs service-worker offline support when served over HTTP or HTTPS.
 
@@ -131,6 +133,21 @@ In the browser print dialog:
 The preview shown in the app is the document intended for printing.
 The print layout is compact and targets one letter-size page for normal rent, utility, and combined invoices.
 
+## Tenants
+
+The Tenants screen has separate active and inactive lists.
+
+Active tenants:
+
+- Appear in the invoice tenant selector.
+- Have an `Invoice` action in the tenant directory.
+
+Inactive tenants:
+
+- Stay in the app for history and old invoices.
+- Do not appear in the active tenant list.
+- Can be restored with `Make active`.
+
 ## Backups
 
 Rent Ledger stores data in the browser on the current device.
@@ -141,15 +158,37 @@ Use `Import backup` to replace the current browser's local data with a saved ful
 
 The same import control can also load a tenant-only JSON file. Tenant-only imports merge into the current browser data, update tenants with matching names, keep landlord settings and invoices, and preserve imported active/inactive status plus payment history in the tenant memo.
 
+## Google Drive Sync
+
+Google Drive sync is optional and requires a Google OAuth web client ID for this hosted app.
+
+The OAuth client must allow this JavaScript origin:
+
+```text
+https://bryanpettit80-cpu.github.io
+```
+
+In `Settings`:
+
+1. Enter the Google OAuth client ID.
+2. Save Drive settings.
+3. Connect Drive.
+4. Use `Load from Drive` or `Save now`.
+5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
+
+When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then auto-sync the JSON state to Drive while the Drive connection is active.
+
+Browser security still requires a user sign-in/authorization step. If the browser reloads or the token expires, reconnect Drive before relying on auto-sync.
+
 Important:
 
 - Browser storage is not a permanent accounting archive.
 - Clearing browser data can remove saved tenants and invoices.
-- The hosted static app does not automatically sync data between devices.
+- Google Drive sync is unavailable until a valid OAuth client ID is configured and Drive is connected.
 
 ## Data And Privacy
 
-This app is local-first. Tenant and invoice data stays in the browser unless you export a backup file.
+This app is local-first. Tenant and invoice data stays in the browser unless you export a backup file or connect Google Drive sync.
 
 The current static version does not include:
 
@@ -224,9 +263,11 @@ For local phone access, make sure:
 
 ### My data is missing on another device
 
-That is expected in the current static version. Data is stored in each browser separately.
+Without Google Drive sync, that is expected. Data is stored in each browser separately.
 
 Export a backup from the first device and import it on the second device.
+
+With Google Drive sync, connect Drive on the second device and use `Load from Drive`.
 
 ## Development Notes
 
