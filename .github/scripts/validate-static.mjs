@@ -50,6 +50,8 @@ assert(files.html.includes("Download from Drive"), "Settings must include Downlo
 assert(files.html.includes("Upload to Drive"), "Settings must include Upload to Drive.");
 assert(!files.html.includes("Save connection settings"), "Settings must not include the removed Save connection settings button.");
 assert(!files.html.includes('id="markPaid"'), "Invoice editor must not include the old header Mark paid button.");
+assert(!files.html.includes('id="newInvoice"'), "Invoice editor must not include the old Start new button.");
+assert(!files.html.includes("Start new"), "Invoice editor must not include Start new copy.");
 
 assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
 assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js must define the utility batch flow.");

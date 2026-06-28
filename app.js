@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v23";
+  const APP_VERSION = "rent-ledger-v24";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -122,7 +122,6 @@
       "applyRentCharge",
       "addLineItem",
       "saveInvoice",
-      "newInvoice",
       "printInvoice",
       "clearPaid",
       "tenantList",
@@ -305,7 +304,6 @@
     els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual upload"));
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
-    els.newInvoice.addEventListener("click", () => startNewInvoice(currentWorkflow));
     els.printInvoice.addEventListener("click", () => window.print());
     els.clearPaid.addEventListener("click", clearPaidInvoices);
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);

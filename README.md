@@ -106,8 +106,6 @@ The invoice header uses these states:
 - `Unsaved changes`: a saved invoice was edited after its last save.
 - `Paid`: the saved invoice has been marked paid from the Invoices page or overview invoice list.
 
-Use `Start new` only when you want to discard the current working form and begin a fresh invoice for the current workflow.
-
 ## Utility Calculations
 
 Open the Utility Allocation section on a `Utility invoice`.

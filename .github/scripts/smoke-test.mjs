@@ -124,7 +124,7 @@ try {
       splashVersion: document.getElementById("splashVersion")?.textContent?.trim(),
       invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
       saveState: document.getElementById("saveState")?.textContent?.trim(),
-      startNewText: document.getElementById("newInvoice")?.textContent?.trim(),
+      startNewExists: Boolean(document.getElementById("newInvoice")),
       markPaidExists: Boolean(document.getElementById("markPaid")),
       invoiceNumber: document.getElementById("invoiceNumber")?.value,
       billingPeriod: document.getElementById("billingPeriod")?.value,
@@ -145,7 +145,7 @@ try {
   assert(rentState.splashVersion === appVersion, `Expected splash version ${appVersion}, got ${rentState.splashVersion}.`);
   assert(rentState.invoiceStatus === "Not saved", `Expected Not saved status, got ${rentState.invoiceStatus}.`);
   assert(rentState.saveState === "Not saved", `Expected Not saved save-state, got ${rentState.saveState}.`);
-  assert(rentState.startNewText === "Start new", `Expected Start new button, got ${rentState.startNewText}.`);
+  assert(!rentState.startNewExists, "Start new should not appear in the invoice editor.");
   assert(!rentState.markPaidExists, "Mark paid should not appear in the invoice editor header.");
   assert(
     expectedRentInvoiceNumber.test(rentState.invoiceNumber || ""),
