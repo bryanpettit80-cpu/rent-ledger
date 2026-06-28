@@ -184,11 +184,12 @@ Do not paste a Google account email, project ID, API key, or client secret. Thos
 In `Settings`:
 
 1. Leave the prefilled Google OAuth client ID in place unless you created a replacement.
-2. Use `Save connection settings` if you change the OAuth client ID or auto-sync setting.
-3. Use `Authorize Drive` to grant Google Drive access.
-4. Use `Load cloud data` to replace this browser's data with the Drive copy.
-5. Use `Sync now` to upload this browser's current data to Drive.
-6. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
+2. Use `Authorize Drive` to grant Google Drive access.
+3. Use `Load cloud data` to replace this browser's data with the Drive copy.
+4. Use `Sync now` to upload this browser's current data to Drive.
+5. Turn on `Auto-sync changes while connected` if you want each saved local change to update Drive.
+
+Drive actions save the current OAuth client ID and auto-sync setting before they run, so there is no separate connection-settings save step.
 
 When connected, the app creates a visible `Rent Ledger` folder and stores `rent-ledger-state.json` in that folder. Saved invoices, tenant edits, settings changes, imports, restores, and paid/deleted invoice changes continue to save locally first, then can sync the JSON state to Drive.
 

@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v19" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v20" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v19" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v20" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v19</strong>
+              <strong id="splashVersion">rent-ledger-v20</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -480,13 +480,12 @@
                   <strong id="driveStatus">Not connected</strong>
                 </div>
                 <div class="button-row">
-                  <button class="secondary-button" id="saveDriveSettings" type="button">Save connection settings</button>
                   <button class="secondary-button" id="connectDrive" type="button">Authorize Drive</button>
                   <button class="secondary-button" id="loadDriveState" type="button">Load cloud data</button>
                   <button class="secondary-button" id="saveDriveState" type="button">Sync now</button>
                 </div>
                 <p class="field-help">
-                  Authorize Drive grants temporary Google access. Sync now uploads this browser's data. Load cloud data replaces this browser's data with the Drive copy.
+                  These actions save the connection fields first. Authorize Drive grants temporary Google access. Sync now uploads this browser's data. Load cloud data replaces this browser's data with the Drive copy.
                 </p>
               </div>
             </section>
@@ -497,6 +496,6 @@
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v19" defer></script>
+    <script src="app.js?v=rent-ledger-v20" defer></script>
   </body>
 </html>

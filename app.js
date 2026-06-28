@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v19";
+  const APP_VERSION = "rent-ledger-v20";
   const APP_COMMIT_DATE = "June 28, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -163,7 +163,6 @@
       "googleClientId",
       "driveAutoSync",
       "driveStatus",
-      "saveDriveSettings",
       "connectDrive",
       "loadDriveState",
       "saveDriveState",
@@ -308,7 +307,6 @@
     els.landlordPhone.addEventListener("blur", () => {
       els.landlordPhone.value = formatPhoneNumber(els.landlordPhone.value);
     });
-    els.saveDriveSettings.addEventListener("click", () => saveDriveSettings(true));
     els.driveAutoSync.addEventListener("change", () => saveDriveSettings(false));
     els.connectDrive.addEventListener("click", connectDrive);
     els.loadDriveState.addEventListener("click", loadStateFromDrive);
@@ -1653,6 +1651,7 @@
   }
 
   async function saveStateToDrive(reason = "Saved") {
+    saveDriveSettings(false);
     if (!(await ensureDriveAccess("saving"))) return;
 
     try {
@@ -1708,6 +1707,7 @@
   }
 
   async function loadStateFromDrive() {
+    saveDriveSettings(false);
     if (!window.confirm("Load Rent Ledger data from Google Drive and replace this browser's local data?")) {
       return;
     }
