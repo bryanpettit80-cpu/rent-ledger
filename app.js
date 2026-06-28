@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v8";
+  const APP_VERSION = "rent-ledger-v9";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
 
   const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -230,6 +230,9 @@
     });
 
     els.tenantForm.addEventListener("submit", saveTenant);
+    els.tenantPhone.addEventListener("blur", () => {
+      els.tenantPhone.value = formatPhoneNumber(els.tenantPhone.value);
+    });
     els.addTenant.addEventListener("click", () => {
       tenantEditorId = "";
       fillTenantForm("");
@@ -245,6 +248,9 @@
     });
 
     els.landlordForm.addEventListener("submit", saveLandlord);
+    els.landlordPhone.addEventListener("blur", () => {
+      els.landlordPhone.value = formatPhoneNumber(els.landlordPhone.value);
+    });
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.newInvoice.addEventListener("click", startNewInvoice);
@@ -359,6 +365,7 @@
 
     const tenantAddress = tenant?.address || "";
     const landlordAddress = landlord.address || "";
+    const landlordPhone = formatPhoneNumber(landlord.phone);
     const paymentInstructions = invoice.paymentInstructions || landlord.paymentInstructions || "";
     const utilityDetails = utilityCalculationDetails(invoice.utilityCalculation);
     const invoiceType = normalizeInvoiceType(invoice.invoiceType);
@@ -370,7 +377,7 @@
           <div>
             <h2>${escapeHtml(landlord.name || "Landlord")}</h2>
             <p class="doc-muted">${formatMultiline(landlordAddress)}</p>
-            <p class="doc-muted">${escapeHtml([landlord.email, landlord.phone].filter(Boolean).join(" | "))}</p>
+            <p class="doc-muted">${escapeHtml([landlord.email, landlordPhone].filter(Boolean).join(" | "))}</p>
           </div>
         </div>
         <div class="invoice-title">
@@ -687,7 +694,7 @@
       unit: els.tenantUnit.value.trim(),
       address: els.tenantAddress.value.trim(),
       email: els.tenantEmail.value.trim(),
-      phone: els.tenantPhone.value.trim(),
+      phone: formatPhoneNumber(els.tenantPhone.value),
       rent: toNumber(els.tenantRent.value),
       utilityUnits: toNumber(els.tenantUtilityUnits.value),
       active: existingTenant?.active ?? true,
@@ -734,7 +741,7 @@
     els.tenantUnit.value = tenant.unit || "";
     els.tenantAddress.value = tenant.address || "";
     els.tenantEmail.value = tenant.email || "";
-    els.tenantPhone.value = tenant.phone || "";
+    els.tenantPhone.value = formatPhoneNumber(tenant.phone);
     els.tenantRent.value = normalizeNumberInput(tenant.rent);
     els.tenantUtilityUnits.value = normalizeNumberInput(tenant.utilityUnits || 1);
     els.tenantMemo.value = tenant.memo || "";
@@ -765,7 +772,7 @@
     els.landlordName.value = state.landlord.name || "";
     els.landlordAddress.value = state.landlord.address || "";
     els.landlordEmail.value = state.landlord.email || "";
-    els.landlordPhone.value = state.landlord.phone || "";
+    els.landlordPhone.value = formatPhoneNumber(state.landlord.phone);
     els.paymentInstructions.value = state.landlord.paymentInstructions || "";
   }
 
@@ -775,7 +782,7 @@
       name: els.landlordName.value.trim(),
       address: els.landlordAddress.value.trim(),
       email: els.landlordEmail.value.trim(),
-      phone: els.landlordPhone.value.trim(),
+      phone: formatPhoneNumber(els.landlordPhone.value),
       paymentInstructions: els.paymentInstructions.value.trim(),
     };
     saveState("Saved settings");
@@ -1120,7 +1127,7 @@
       unit: value.unit || "",
       address: value.address || "",
       email: value.email || "",
-      phone: value.phone || "",
+      phone: formatPhoneNumber(value.phone),
       rent: toNumber(value.rent),
       utilityUnits: toNumber(value.utilityUnits || value.occupancyUnits || 1),
       active: Object.prototype.hasOwnProperty.call(value, "active") ? Boolean(value.active) : true,
@@ -1168,7 +1175,7 @@
           ...tenant,
           id: existing.id,
           email: tenant.email || existing.email || "",
-          phone: tenant.phone || existing.phone || "",
+          phone: tenant.phone || formatPhoneNumber(existing.phone) || "",
           unit: tenant.unit || existing.unit || "",
         };
       } else {
@@ -1254,8 +1261,10 @@
   }
 
   function normalizeState(value) {
+    const landlord = { ...defaultState.landlord, ...(value?.landlord || {}) };
+    landlord.phone = formatPhoneNumber(landlord.phone);
     return {
-      landlord: { ...defaultState.landlord, ...(value?.landlord || {}) },
+      landlord,
       tenants: Array.isArray(value?.tenants) ? value.tenants.map(normalizeTenant) : [],
       invoices: Array.isArray(value?.invoices) ? value.invoices.map(normalizeInvoice) : [],
     };
@@ -1264,6 +1273,7 @@
   function normalizeTenant(tenant) {
     return {
       ...tenant,
+      phone: formatPhoneNumber(tenant?.phone),
       utilityUnits: toNumber(tenant?.utilityUnits || 1),
       utilities: toNumber(tenant?.utilities),
     };
@@ -1403,6 +1413,14 @@
   function formatNumber(value) {
     const number = toNumber(value);
     return Number.isInteger(number) ? String(number) : String(roundMoney(number));
+  }
+
+  function formatPhoneNumber(value) {
+    const raw = String(value || "").trim();
+    const digits = raw.replace(/\D/g, "");
+    const tenDigits = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+    if (tenDigits.length !== 10) return raw;
+    return `(${tenDigits.slice(0, 3)}) ${tenDigits.slice(3, 6)}-${tenDigits.slice(6)}`;
   }
 
   function monthLabel(date) {
