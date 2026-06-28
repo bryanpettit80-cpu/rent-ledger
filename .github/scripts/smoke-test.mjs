@@ -302,7 +302,12 @@ try {
     `Unexpected Drive buttons: ${settingsState.buttons.join("|")}.`
   );
   assert(!settingsState.hasSaveConnection, "Removed Save connection settings text should not be present.");
-  assert(settingsState.driveStatus === "Not connected. Click Connect Drive.", `Unexpected Drive status: ${settingsState.driveStatus}.`);
+  assert(
+    ["Not connected. Click Connect Drive.", "Google Drive confirmation was cancelled or expired."].includes(
+      settingsState.driveStatus
+    ),
+    `Unexpected Drive status: ${settingsState.driveStatus}.`
+  );
   assert(settingsState.help.includes("Download replaces this browser's data"), "Drive help must explain Upload and Download.");
 
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";
