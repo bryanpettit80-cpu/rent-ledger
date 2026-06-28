@@ -161,7 +161,7 @@ The same import control can also load a tenant-only JSON file. Tenant-only impor
 
 ## Google Drive Sync
 
-Google Drive sync is optional and requires a Google OAuth web client ID for this hosted app.
+Google Drive sync is optional. The hosted app is preconfigured with a Google OAuth web client ID, and `Settings` lets you replace it if you create a new Google Cloud project later.
 
 The OAuth client must allow this JavaScript origin:
 
@@ -179,7 +179,7 @@ Do not paste a Google account email, project ID, API key, or client secret. Thos
 
 In `Settings`:
 
-1. Enter the Google OAuth client ID.
+1. Leave the prefilled Google OAuth client ID in place unless you created a replacement.
 2. Save Drive settings.
 3. Connect Drive.
 4. Use `Load from Drive` or `Save now`.

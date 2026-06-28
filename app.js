@@ -2,9 +2,11 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v12";
+  const APP_VERSION = "rent-ledger-v13";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
+  const DEFAULT_GOOGLE_CLIENT_ID =
+    "1053768686767-tjgtqui15pmh3q9blogtruftmo6lktfg.apps.googleusercontent.com";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
   const DRIVE_FOLDER_NAME = "Rent Ledger";
   const DRIVE_INVOICE_FOLDER_NAME = "Invoices";
@@ -917,7 +919,7 @@
 
   function saveDriveSettings(showMessage) {
     const previousClientId = appSettings.googleClientId;
-    const nextClientId = cleanGoogleClientId(els.googleClientId.value);
+    const nextClientId = cleanGoogleClientId(els.googleClientId.value) || DEFAULT_GOOGLE_CLIENT_ID;
     els.googleClientId.value = nextClientId;
     appSettings = {
       ...appSettings,
@@ -1183,8 +1185,11 @@
   function loadAppSettings() {
     try {
       const parsed = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || "{}");
+      const storedClientId = cleanGoogleClientId(parsed.googleClientId);
       return {
-        googleClientId: String(parsed.googleClientId || "").trim(),
+        googleClientId: isValidGoogleClientId(storedClientId)
+          ? storedClientId
+          : DEFAULT_GOOGLE_CLIENT_ID,
         driveAutoSync: Boolean(parsed.driveAutoSync),
         driveFolderId: String(parsed.driveFolderId || "").trim(),
         driveInvoiceFolderId: String(parsed.driveInvoiceFolderId || "").trim(),
@@ -1193,7 +1198,7 @@
     } catch (error) {
       console.warn("Unable to load Rent Ledger settings.", error);
       return {
-        googleClientId: "",
+        googleClientId: DEFAULT_GOOGLE_CLIENT_ID,
         driveAutoSync: false,
         driveFolderId: "",
         driveInvoiceFolderId: "",
