@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v27";
+  const APP_VERSION = "rent-ledger-v28";
   const APP_COMMIT_DATE = "July 1, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -1091,9 +1091,9 @@
     return renderCycleRow({
       tenant,
       title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
-      detail,
+      detail: invoice ? invoiceCycleDetail(invoice, detail) : detail,
       status,
-      amount: formatMoney(tenant.rent || 0),
+      amount: invoiceCycleAmount(invoice, tenant.rent || 0),
       invoice,
       createAction: `data-create-rent-invoice="${escapeAttr(tenant.id)}"`,
       createLabel: "Create",
@@ -1119,9 +1119,9 @@
     return renderCycleRow({
       tenant,
       title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
-      detail,
+      detail: invoice ? invoiceCycleDetail(invoice, detail) : detail,
       status,
-      amount: formatMoney(tenant.securityDeposit || 0),
+      amount: invoiceCycleAmount(invoice, tenant.securityDeposit || 0),
       invoice,
       createAction: `data-create-security-deposit-invoice="${escapeAttr(tenant.id)}"`,
       createLabel: "Create",
@@ -1154,7 +1154,11 @@
     const calculation = utilityCalculationForTenant(tenant, cycleUtilityCalculation);
     const details = utilityCalculationDetails(calculation);
     const status = invoice ? invoiceStatusText(invoice) : "Not created";
-    const amount = details.hasTotal && details.share > 0 ? formatMoney(details.share) : "$0.00";
+    const amount = invoice
+      ? invoiceCycleAmount(invoice, details.share)
+      : details.hasTotal && details.share > 0
+        ? formatMoney(details.share)
+        : "$0.00";
     const detail =
       calculation.method === "equalSplit"
         ? `${formatNumber(calculation.totalUnits)} shares`
@@ -1162,7 +1166,7 @@
     return renderCycleRow({
       tenant,
       title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
-      detail,
+      detail: invoice ? invoiceCycleDetail(invoice, detail) : detail,
       status,
       amount,
       invoice,
@@ -1189,6 +1193,21 @@
         <strong>${escapeHtml(amount)}</strong>
         <div class="card-actions">${actions}</div>
       </article>`;
+  }
+
+  function invoiceCycleAmount(invoice, fallbackAmount) {
+    return invoice ? formatMoney(calculateTotal(invoice)) : formatMoney(fallbackAmount);
+  }
+
+  function invoiceCycleDetail(invoice, baseDetail) {
+    const adjustments = [];
+    const credits = toNumber(invoice?.credits);
+    const payments = invoicePaymentTotal(invoice);
+    const previousBalance = toNumber(invoice?.previousBalance);
+    if (previousBalance > 0) adjustments.push(`previous balance ${formatMoney(previousBalance)}`);
+    if (credits > 0) adjustments.push(`credits ${formatMoney(credits)}`);
+    if (payments > 0) adjustments.push(`payments ${formatMoney(payments)}`);
+    return adjustments.length ? `${baseDetail}; ${adjustments.join(", ")} applied` : baseDetail;
   }
 
   function currentRentInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
@@ -1743,7 +1762,7 @@
     els.partialPaymentFields.hidden = true;
     els.partialPaymentAmount.value = "";
     els.partialPaymentAmount.max = String(balance);
-    els.paymentDialogCopy.textContent = `Balance due is ${formatMoney(balance)}. Choose Full or enter a partial amount.`;
+    els.paymentDialogCopy.textContent = paymentDialogCopy(invoice);
     els.paymentDialog.hidden = false;
     els.paymentFull.focus();
   }
@@ -1785,7 +1804,11 @@
       return;
     }
     if (amount > balance) {
-      showToast(`Payment cannot exceed the ${formatMoney(balance)} balance.`);
+      showToast(
+        `Payment cannot exceed the current balance due of ${formatMoney(
+          balance
+        )}. Credits and prior payments already reduce the balance.`
+      );
       return;
     }
 
@@ -1805,6 +1828,20 @@
     closePaymentDialog();
     renderAll();
     showToast(invoice.status === "paid" ? "Invoice marked paid." : "Partial payment recorded.");
+  }
+
+  function paymentDialogCopy(invoice) {
+    const charges = sumLineItems(invoice.lineItems) + toNumber(invoice.previousBalance);
+    const credits = toNumber(invoice.credits);
+    const payments = invoicePaymentTotal(invoice);
+    const balance = calculateTotal(invoice);
+    const applied = [];
+    if (credits > 0) applied.push(`credits ${formatMoney(credits)}`);
+    if (payments > 0) applied.push(`prior payments ${formatMoney(payments)}`);
+    const appliedText = applied.length ? ` ${applied.join(" and ")} already applied.` : "";
+    return `Charges total ${formatMoney(charges)}.${appliedText} Balance due is ${formatMoney(
+      balance
+    )}. Choose Full to pay the remaining balance or enter a partial amount.`;
   }
 
   function reopenInvoice(invoiceId) {

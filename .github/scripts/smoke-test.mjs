@@ -89,7 +89,7 @@ try {
           email: "",
           phone: "",
           rent: 850,
-          securityDeposit: 850,
+          securityDeposit: 350,
           utilityUnits: 1,
           active: true,
           excludeUtilities: false,
@@ -478,7 +478,7 @@ try {
     securityState.lineTypes.join("|") === "Security Deposit",
     `Expected one Security Deposit line, got ${securityState.lineTypes.join("|")}.`
   );
-  assert(securityState.lineAmounts[0] === "850", `Expected deposit amount 850, got ${securityState.lineAmounts[0]}.`);
+  assert(securityState.lineAmounts[0] === "350", `Expected deposit amount 350, got ${securityState.lineAmounts[0]}.`);
   assert(
     securityState.batchButton === "Create all security deposits",
     `Expected security deposit batch button, got ${securityState.batchButton}.`
@@ -511,9 +511,43 @@ try {
     `Expected Mark paid buttons, got ${securityBatchState.buttons.join("|")}.`
   );
 
+  await page.fill("#credits", "200");
+  await page.click("#saveInvoice");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const invoice = (state.invoices || []).find((item) => item.invoiceType === "security" && item.tenantId === "andrew");
+    return invoice?.credits === 200;
+  });
+  const creditedSecurityState = await page.evaluate(() => ({
+    firstCardText: document.querySelector("#securityDepositBatchList .cycle-row")?.textContent.trim(),
+    firstCardAmount: document.querySelector("#securityDepositBatchList .cycle-row > strong")?.textContent.trim(),
+  }));
+  assert(
+    creditedSecurityState.firstCardText.includes("credits $200.00 applied"),
+    `Expected credited security row to mention applied credit: ${creditedSecurityState.firstCardText}.`
+  );
+  assert(
+    creditedSecurityState.firstCardAmount === "$150.00",
+    `Expected credited security row balance $150.00, got ${creditedSecurityState.firstCardAmount}.`
+  );
+
   await page.click("#securityDepositBatchList [data-toggle-paid-invoice]");
   await page.waitForFunction(() => document.getElementById("paymentDialog")?.hidden === false);
+  const creditedPaymentDialog = await page.evaluate(() => document.getElementById("paymentDialogCopy")?.textContent?.trim());
+  assert(
+    creditedPaymentDialog.includes("Charges total $350.00.") &&
+      creditedPaymentDialog.includes("credits $200.00 already applied.") &&
+      creditedPaymentDialog.includes("Balance due is $150.00."),
+    `Expected payment dialog to explain credited balance, got: ${creditedPaymentDialog}.`
+  );
   await page.click("#paymentPartial");
+  await page.fill("#partialPaymentAmount", "200");
+  await page.click("#paymentPartialSave");
+  const overpaymentToast = await page.locator("#toast").textContent();
+  assert(
+    overpaymentToast.includes("Payment cannot exceed the current balance due of $150.00"),
+    `Expected overpayment toast to reference the $150.00 balance, got: ${overpaymentToast}.`
+  );
   await page.fill("#partialPaymentAmount", "100");
   await page.click("#paymentPartialSave");
   const partialState = await page.evaluate(() => {
@@ -526,6 +560,7 @@ try {
       paymentTotal: (invoice?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0),
       remainingTotal:
         (invoice?.lineItems || []).reduce((total, item) => total + Number(item.amount || 0), 0) -
+        Number(invoice?.credits || 0) -
         (invoice?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0),
     };
   });
@@ -536,7 +571,7 @@ try {
   assert(partialState.firstToggle === "Mark paid", `Expected Mark paid after partial payment, got ${partialState.firstToggle}.`);
   assert(partialState.status === "partial", `Expected stored partial status, got ${partialState.status}.`);
   assert(partialState.paymentTotal === 100, `Expected stored payment total 100, got ${partialState.paymentTotal}.`);
-  assert(partialState.remainingTotal === 750, `Expected remaining balance 750, got ${partialState.remainingTotal}.`);
+  assert(partialState.remainingTotal === 50, `Expected remaining balance 50, got ${partialState.remainingTotal}.`);
 
   await page.click("#securityDepositBatchList [data-toggle-paid-invoice]");
   await page.waitForFunction(() => document.getElementById("paymentDialog")?.hidden === false);

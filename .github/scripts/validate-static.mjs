@@ -70,6 +70,10 @@ assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js 
 assert(files.app.includes("async function createAllSecurityDepositInvoices"), "app.js must define the security deposit batch flow.");
 assert(files.app.includes("function recordInvoicePayment"), "app.js must define invoice payment recording.");
 assert(files.app.includes("function openPaymentDialog"), "app.js must open the payment dialog from Mark paid.");
+assert(files.app.includes("function paymentDialogCopy"), "Payment dialog must explain charges, credits, payments, and balance.");
+assert(files.app.includes("function invoiceCycleAmount"), "Workflow rows must show current invoice balance when an invoice exists.");
+assert(files.app.includes("function invoiceCycleDetail"), "Workflow rows must show applied credits or payments.");
+assert(files.app.includes("Payment cannot exceed the current balance due"), "Overpayment errors must reference current balance due.");
 assert(files.app.includes("function markInvoiceDriveSaved"), "app.js must persist invoice Drive PDF metadata.");
 assert(files.app.includes("invoiceSavedToDrive(draft)"), "Saved invoice labels must use persisted Drive metadata.");
 assert(files.app.includes("drivePdfFileId"), "Invoices must store the Drive PDF file id after upload.");
@@ -102,6 +106,7 @@ assert(files.readme.includes("Partially paid"), "README must document partial in
 assert(files.readme.includes("Saved locally"), "README must document the saved-local state.");
 assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
 assert(files.readme.includes("Drive PDF metadata"), "README must explain saved-to-Drive metadata.");
+assert(files.readme.includes("Credits or adjustments reduce the balance"), "README must explain credit and payment balance handling.");
 
 if (failures.length) {
   console.error("Static validation failed:");

@@ -135,6 +135,8 @@ The invoice header uses these states:
 
 Use `Mark paid` from a saved invoice card or workflow row to open the payment popup. Choose `Full` to record the remaining balance, or choose `Partial` and enter the amount received. Fully paid invoices can be reopened, which clears the recorded invoice payments and returns the invoice to `Open`. Editing, marking paid, or reopening an invoice clears its prior Drive PDF metadata until the changed invoice is saved to Drive again.
 
+Credits or adjustments reduce the balance before payment recording. If a $200 tenant payment is entered as a credit, do not also record that same $200 through `Mark paid`; the payment popup only accepts amounts up to the remaining balance due.
+
 ## Utility Calculations
 
 Open the Utility Allocation section on a `Utility invoice`.
