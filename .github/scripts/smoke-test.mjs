@@ -290,7 +290,7 @@ try {
   });
   await page.reload({ waitUntil: "networkidle" });
   await page.click('[data-view="invoices"]');
-  await page.click(`[data-load-invoice="${driveSavedInvoiceId}"]`);
+  await page.click(`#invoiceHistory [data-load-invoice="${driveSavedInvoiceId}"]`);
   const driveSavedLabelState = await page.evaluate(() => ({
     saveState: document.getElementById("saveState")?.textContent?.trim(),
     invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
