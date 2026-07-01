@@ -1119,6 +1119,11 @@ button:focus-visible {
     border-bottom: 0;
   }
 
+  .nav-tab:last-child {
+    grid-column: 1 / -1;
+    border-right: 0;
+  }
+
   .main {
     padding: 14px;
   }

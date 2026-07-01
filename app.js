@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v26";
+  const APP_VERSION = "rent-ledger-v27";
   const APP_COMMIT_DATE = "July 1, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -561,6 +561,7 @@
   function invoiceStatusLabel() {
     if (draft.status === "partial") return "Partially paid";
     if (draft.status === "paid") return "Paid";
+    if (selectedInvoiceId && invoiceSavedToDrive(draft)) return "Saved to Drive";
     return selectedInvoiceId ? "Saved locally" : "Draft";
   }
 
@@ -1731,6 +1732,7 @@
     const balance = calculateTotal(invoice);
     if (balance <= 0) {
       invoice.status = "paid";
+      clearInvoiceDriveMetadata(invoice);
       invoice.updatedAt = new Date().toISOString();
       saveState("Marked invoice paid");
       renderAll();
@@ -1769,6 +1771,7 @@
     const balance = calculateTotal(invoice);
     if (balance <= 0) {
       invoice.status = "paid";
+      clearInvoiceDriveMetadata(invoice);
       invoice.updatedAt = new Date().toISOString();
       saveState("Marked invoice paid");
       closePaymentDialog();
@@ -1793,6 +1796,7 @@
       method: mode === "full" ? "Full payment" : "Partial payment",
     });
     invoice.status = calculateTotal(invoice) <= 0 ? "paid" : "partial";
+    clearInvoiceDriveMetadata(invoice);
     invoice.updatedAt = new Date().toISOString();
     if (selectedInvoiceId === invoiceId) {
       draft = clone(invoice);
@@ -1808,6 +1812,7 @@
     if (!invoice) return;
     invoice.status = "open";
     invoice.payments = [];
+    clearInvoiceDriveMetadata(invoice);
     invoice.updatedAt = new Date().toISOString();
     if (selectedInvoiceId === invoiceId) {
       draft = clone(invoice);
@@ -2291,6 +2296,7 @@
   }
 
   function markDirty() {
+    if (selectedInvoiceId) clearInvoiceDriveMetadata(draft);
     els.saveState.textContent = selectedInvoiceId ? "Unsaved changes" : "Draft";
     if (draft.status !== "paid") {
       els.invoiceStatus.textContent = selectedInvoiceId ? "Unsaved changes" : "Draft";
@@ -2300,9 +2306,44 @@
   function setSavedStateLabel(driveSaved) {
     if (!els.invoiceStatus || !els.saveState) return;
     const label =
-      draft.status === "paid" ? "Paid" : draft.status === "partial" ? "Partially paid" : driveSaved ? "Saved to Drive" : "Saved locally";
+      draft.status === "paid"
+        ? "Paid"
+        : draft.status === "partial"
+          ? "Partially paid"
+          : driveSaved || invoiceSavedToDrive(draft)
+            ? "Saved to Drive"
+            : "Saved locally";
     els.invoiceStatus.textContent = label;
     els.saveState.textContent = label;
+  }
+
+  function invoiceSavedToDrive(invoice) {
+    return Boolean(invoice?.drivePdfFileId && invoice?.driveSavedAt);
+  }
+
+  function clearInvoiceDriveMetadata(invoice) {
+    if (!invoice) return;
+    invoice.drivePdfFileId = "";
+    invoice.drivePdfFileName = "";
+    invoice.driveSavedAt = "";
+    invoice.driveModifiedTime = "";
+  }
+
+  function markInvoiceDriveSaved(invoiceId, file, options = {}) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return null;
+    invoice.drivePdfFileId = String(file?.id || "");
+    invoice.drivePdfFileName = String(file?.name || invoicePdfFileName(invoice, getTenant(invoice.tenantId)));
+    invoice.driveModifiedTime = String(file?.modifiedTime || "");
+    invoice.driveSavedAt = new Date().toISOString();
+    invoice.updatedAt = new Date().toISOString();
+    if (selectedInvoiceId === invoice.id) {
+      draft = clone(invoice);
+    }
+    if (options.write !== false) {
+      writeLocalState("Saved invoice to Drive");
+    }
+    return invoice;
   }
 
   function loadState() {
@@ -2353,10 +2394,14 @@
   }
 
   function saveState(reason = "Saved data") {
+    writeLocalState(reason);
+    queueDriveSync(reason);
+  }
+
+  function writeLocalState(reason = "Saved data") {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     recordLocalBackup(reason, state);
     renderBackupStatus();
-    queueDriveSync(reason);
   }
 
   function exportBackup() {
@@ -2496,6 +2541,9 @@
       await uploadDriveState();
       const pdfBlob = createInvoicePdfBlob(invoice);
       const file = await uploadInvoicePdf(invoice, pdfBlob);
+      markInvoiceDriveSaved(invoice.id, file, { write: false });
+      writeLocalState("Saved invoice to Drive");
+      await uploadDriveState();
       renderDriveStatus(`Saved to Drive: ${file.name || "invoice PDF"}.`);
       return true;
     } catch (error) {
@@ -2522,8 +2570,11 @@
       renderDriveStatus("Uploading app data and invoice PDFs to Drive...");
       await uploadDriveState();
       for (const invoice of invoices) {
-        await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
+        const file = await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
+        markInvoiceDriveSaved(invoice.id, file, { write: false });
       }
+      writeLocalState("Saved invoices to Drive");
+      await uploadDriveState();
       renderDriveStatus(`Saved ${invoices.length} invoice PDF${invoices.length === 1 ? "" : "s"} to Drive.`);
       return true;
     } catch (error) {
@@ -3323,6 +3374,10 @@
           }))
         : [],
       payments: normalizeInvoicePayments(invoice?.payments),
+      drivePdfFileId: String(invoice?.drivePdfFileId || ""),
+      drivePdfFileName: String(invoice?.drivePdfFileName || ""),
+      driveSavedAt: String(invoice?.driveSavedAt || ""),
+      driveModifiedTime: String(invoice?.driveModifiedTime || ""),
     };
   }
 

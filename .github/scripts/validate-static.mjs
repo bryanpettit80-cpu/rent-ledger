@@ -70,6 +70,9 @@ assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js 
 assert(files.app.includes("async function createAllSecurityDepositInvoices"), "app.js must define the security deposit batch flow.");
 assert(files.app.includes("function recordInvoicePayment"), "app.js must define invoice payment recording.");
 assert(files.app.includes("function openPaymentDialog"), "app.js must open the payment dialog from Mark paid.");
+assert(files.app.includes("function markInvoiceDriveSaved"), "app.js must persist invoice Drive PDF metadata.");
+assert(files.app.includes("invoiceSavedToDrive(draft)"), "Saved invoice labels must use persisted Drive metadata.");
+assert(files.app.includes("drivePdfFileId"), "Invoices must store the Drive PDF file id after upload.");
 assert(files.app.includes("function setPreviewVisible"), "app.js must define mobile preview visibility handling.");
 assert(files.app.includes("function setInvoicePaid"), "Saved invoices must support mark-paid/reopen actions.");
 assert(files.app.includes('invoice.status = calculateTotal(invoice) <= 0 ? "paid" : "partial";'), "Partial payments must leave invoices in partial status.");
@@ -81,6 +84,11 @@ assert(files.app.includes("/^(INV|RNT|UTL|DEP)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Gen
 assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
+assert(
+  files.app.includes("markInvoiceDriveSaved(invoice.id, file, { write: false });") &&
+    files.app.includes('writeLocalState("Saved invoice to Drive");'),
+  "Drive state should be updated after invoice PDF metadata is recorded."
+);
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
@@ -93,6 +101,7 @@ assert(files.readme.includes("Invoice States"), "README must document invoice st
 assert(files.readme.includes("Partially paid"), "README must document partial invoice payment state.");
 assert(files.readme.includes("Saved locally"), "README must document the saved-local state.");
 assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
+assert(files.readme.includes("Drive PDF metadata"), "README must explain saved-to-Drive metadata.");
 
 if (failures.length) {
   console.error("Static validation failed:");

@@ -127,6 +127,8 @@ try {
     rentCount: document.getElementById("rentWorkflowCount")?.textContent?.trim(),
     utilityCount: document.getElementById("utilityWorkflowCount")?.textContent?.trim(),
     securityDepositCount: document.getElementById("securityDepositWorkflowCount")?.textContent?.trim(),
+    navWidth: Math.round(document.querySelector(".nav-tabs")?.getBoundingClientRect().width || 0),
+    settingsWidth: Math.round(document.querySelector('[data-view="settings"]')?.getBoundingClientRect().width || 0),
   }));
   assert(overviewState.overviewActive, "App should open on the Overview workflow page.");
   assert(
@@ -141,6 +143,10 @@ try {
   assert(
     overviewState.securityDepositCount === "2 remaining",
     `Expected 2 security deposit invoices remaining, got ${overviewState.securityDepositCount}.`
+  );
+  assert(
+    Math.abs(overviewState.settingsWidth + 2 - overviewState.navWidth) <= 1,
+    `Expected Settings to fill the bottom nav row, got ${overviewState.settingsWidth} of ${overviewState.navWidth}.`
   );
 
   await page.click('[data-view="rent"]');
@@ -271,6 +277,30 @@ try {
     `Batch rent invoice numbers did not match ${expectedRentInvoiceNumber}: ${rentBatchState.invoiceNumbers.join(", ")}.`
   );
   assert(rentBatchState.saveState === "Saved locally", `Expected saved-local state after mocked Drive failure, got ${rentBatchState.saveState}.`);
+
+  const driveSavedInvoiceId = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const invoice = (state.invoices || []).find((item) => item.invoiceType === "rent" && item.tenantId === "andrew");
+    invoice.drivePdfFileId = "drive-pdf-123";
+    invoice.drivePdfFileName = `${invoice.invoiceNumber}-Andrew-Buckwalter.pdf`;
+    invoice.driveSavedAt = "2026-07-01T13:00:00.000Z";
+    invoice.driveModifiedTime = "2026-07-01T13:00:00.000Z";
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+    return invoice.id;
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.click('[data-view="invoices"]');
+  await page.click(`[data-load-invoice="${driveSavedInvoiceId}"]`);
+  const driveSavedLabelState = await page.evaluate(() => ({
+    saveState: document.getElementById("saveState")?.textContent?.trim(),
+    invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
+    invoiceType: document.getElementById("invoiceType")?.value,
+  }));
+  assert(
+    driveSavedLabelState.saveState === "Saved to Drive" && driveSavedLabelState.invoiceStatus === "Saved to Drive",
+    `Expected reopened Drive-saved invoice to show Saved to Drive, got ${driveSavedLabelState.invoiceStatus}/${driveSavedLabelState.saveState}.`
+  );
+  assert(driveSavedLabelState.invoiceType === "rent", `Expected reopened Drive-saved rent invoice, got ${driveSavedLabelState.invoiceType}.`);
 
   await page.click('[data-view="utility"]');
   await page.waitForFunction(

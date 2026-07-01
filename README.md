@@ -128,12 +128,12 @@ The invoice header uses these states:
 
 - `Draft`: the current invoice is a working draft in the browser and has not been saved as an invoice record.
 - `Saved locally`: the invoice is saved in the browser.
-- `Saved to Drive`: the invoice is saved in the browser and the invoice PDF/state upload completed in Google Drive.
+- `Saved to Drive`: the invoice is saved in the browser and has Drive PDF metadata from a completed PDF/state upload.
 - `Unsaved changes`: a saved invoice was edited after its last save.
 - `Partially paid`: one or more partial payments have been recorded and a balance remains.
 - `Paid`: the saved invoice has been fully paid from the Invoices page, overview invoice list, or workflow row.
 
-Use `Mark paid` from a saved invoice card or workflow row to open the payment popup. Choose `Full` to record the remaining balance, or choose `Partial` and enter the amount received. Fully paid invoices can be reopened, which clears the recorded invoice payments and returns the invoice to `Open`.
+Use `Mark paid` from a saved invoice card or workflow row to open the payment popup. Choose `Full` to record the remaining balance, or choose `Partial` and enter the amount received. Fully paid invoices can be reopened, which clears the recorded invoice payments and returns the invoice to `Open`. Editing, marking paid, or reopening an invoice clears its prior Drive PDF metadata until the changed invoice is saved to Drive again.
 
 ## Utility Calculations
 
