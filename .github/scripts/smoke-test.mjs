@@ -564,9 +564,11 @@ try {
   );
   assert(!settingsState.hasSaveConnection, "Removed Save connection settings text should not be present.");
   assert(
-    ["Not connected. Click Connect Drive.", "Google Drive confirmation was cancelled or expired."].includes(
-      settingsState.driveStatus
-    ),
+    [
+      "Not connected. Click Connect Drive.",
+      "Google Drive confirmation was cancelled or expired.",
+      "Google confirmation needed for saving security deposit invoices...",
+    ].includes(settingsState.driveStatus),
     `Unexpected Drive status: ${settingsState.driveStatus}.`
   );
   assert(settingsState.help.includes("Download replaces this browser's data"), "Drive help must explain Upload and Download.");
