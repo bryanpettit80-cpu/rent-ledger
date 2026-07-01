@@ -2,8 +2,8 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v25";
-  const APP_COMMIT_DATE = "June 28, 2026";
+  const APP_VERSION = "rent-ledger-v26";
+  const APP_COMMIT_DATE = "July 1, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
@@ -38,6 +38,7 @@
         email: "tenant@example.com",
         phone: "(555) 010-3344",
         rent: 1450,
+        securityDeposit: 1450,
         utilityUnits: 1.5,
         memo: "Replace this sample with your tenant details.",
       },
@@ -52,7 +53,8 @@
   let tenantEditorId = selectedTenantId;
   let draft = createBlankInvoice(selectedTenantId);
   let cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
-  let currentWorkflow = normalizeInvoiceType(draft.invoiceType) === "utility" ? "utility" : "rent";
+  let currentWorkflow = workflowFromInvoiceType(draft.invoiceType);
+  let paymentDialogInvoiceId = "";
   let toastTimer = 0;
   let driveAccessToken = "";
   let driveTokenClient = null;
@@ -100,6 +102,11 @@
       "rentBatchCopy",
       "rentBatchList",
       "createAllRentInvoices",
+      "securityDepositBatchPanel",
+      "securityDepositBatchHeading",
+      "securityDepositBatchCopy",
+      "securityDepositBatchList",
+      "createAllSecurityDepositInvoices",
       "utilityBatchPanel",
       "utilityBatchHeading",
       "utilityBatchCopy",
@@ -129,11 +136,14 @@
       "cycleOpenBalance",
       "rentWorkflowCount",
       "utilityWorkflowCount",
+      "securityDepositWorkflowCount",
       "cycleMissingRent",
       "cycleMissingUtilities",
+      "cycleMissingSecurityDeposits",
       "overviewInvoiceList",
       "startRentWorkflow",
       "startUtilityWorkflow",
+      "startSecurityDepositWorkflow",
       "reviewInvoicesWorkflow",
       "invoiceWorkflowCount",
       "workflowEyebrow",
@@ -157,6 +167,7 @@
       "tenantEmail",
       "tenantPhone",
       "tenantRent",
+      "tenantSecurityDeposit",
       "tenantUtilityUnits",
       "tenantMemo",
       "tenantActive",
@@ -191,6 +202,14 @@
       "splashVersion",
       "splashCommitDate",
       "enterApp",
+      "paymentDialog",
+      "paymentDialogCopy",
+      "paymentFull",
+      "paymentPartial",
+      "paymentCancel",
+      "partialPaymentFields",
+      "partialPaymentAmount",
+      "paymentPartialSave",
     ].forEach((id) => {
       els[id] = document.getElementById(id);
     });
@@ -205,8 +224,16 @@
     });
     els.startRentWorkflow.addEventListener("click", () => setView("rent"));
     els.startUtilityWorkflow.addEventListener("click", () => setView("utility"));
+    els.startSecurityDepositWorkflow.addEventListener("click", () => setView("security"));
     els.reviewInvoicesWorkflow.addEventListener("click", () => setView("invoices"));
     els.enterApp.addEventListener("click", dismissSplash);
+    els.paymentFull.addEventListener("click", () => recordInvoicePayment(paymentDialogInvoiceId, "full"));
+    els.paymentPartial.addEventListener("click", showPartialPaymentEntry);
+    els.paymentPartialSave.addEventListener("click", () => recordInvoicePayment(paymentDialogInvoiceId, "partial"));
+    els.paymentCancel.addEventListener("click", closePaymentDialog);
+    els.paymentDialog.addEventListener("click", (event) => {
+      if (event.target === els.paymentDialog) closePaymentDialog();
+    });
 
     els.tenantSelect.addEventListener("change", () => {
       const currentUtilityCalculation = readUtilityCalculationFromForm(draft.utilityCalculation);
@@ -280,8 +307,10 @@
       });
     });
     els.rentBatchList.addEventListener("click", handleCycleActionClick);
+    els.securityDepositBatchList.addEventListener("click", handleCycleActionClick);
     els.utilityAllocationList.addEventListener("click", handleCycleActionClick);
     els.createAllRentInvoices.addEventListener("click", createAllRentInvoices);
+    els.createAllSecurityDepositInvoices.addEventListener("click", createAllSecurityDepositInvoices);
 
     els.applyRentCharge.addEventListener("click", () => {
       syncDraftFromForm();
@@ -398,7 +427,7 @@
   }
 
   function normalizeViewName(viewName) {
-    if (["overview", "rent", "utility", "invoices", "tenants", "settings"].includes(viewName)) return viewName;
+    if (["overview", "rent", "utility", "security", "invoices", "tenants", "settings"].includes(viewName)) return viewName;
     if (viewName === "invoice") return currentWorkflow;
     return "overview";
   }
@@ -406,11 +435,12 @@
   function invoiceWorkflowFromView(viewName) {
     if (viewName === "rent") return "rent";
     if (viewName === "utility") return "utility";
+    if (viewName === "security") return "security";
     return "";
   }
 
   function setInvoiceWorkflow(invoiceType, options = {}) {
-    const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
+    const nextType = workflowFromInvoiceType(invoiceType);
     currentWorkflow = nextType;
     if (normalizeInvoiceType(draft.invoiceType) !== nextType) {
       startNewInvoice(nextType, { silent: true });
@@ -456,11 +486,17 @@
   }
 
   function renderTenantOptions() {
-    const activeTenants = selectableTenantsForCurrentWorkflow();
+    let activeTenants = selectableTenantsForCurrentWorkflow();
+    const savedInvoiceTenant = selectedInvoiceId ? getTenant(draft.tenantId || selectedTenantId) : null;
+    if (!activeTenants.length && savedInvoiceTenant) {
+      activeTenants = [savedInvoiceTenant];
+    }
     if (!activeTenants.length) {
       els.tenantSelect.innerHTML =
         currentWorkflow === "utility"
           ? `<option value="">No utility-billable active tenants</option>`
+          : currentWorkflow === "security"
+            ? `<option value="">No active tenants with security deposits</option>`
           : `<option value="">Add an active tenant first</option>`;
       selectedTenantId = "";
       return;
@@ -468,24 +504,25 @@
 
     const preferredTenantId = selectedTenantId || draft.tenantId;
     const selectedTenant = getTenant(preferredTenantId);
-    const includeSelectedInactive = selectedTenant && selectedTenant.active === false && selectedInvoiceId;
+    const includeSelectedTenant =
+      selectedTenant && selectedInvoiceId && !activeTenants.some((tenant) => tenant.id === selectedTenant.id);
     els.tenantSelect.innerHTML = activeTenants
       .map((tenant) => {
         const label = [tenant.name, tenant.unit].filter(Boolean).join(" - ");
         return `<option value="${escapeAttr(tenant.id)}">${escapeHtml(label)}</option>`;
       })
       .concat(
-        includeSelectedInactive
+        includeSelectedTenant
           ? [
               `<option value="${escapeAttr(selectedTenant.id)}">${escapeHtml(
                 [selectedTenant.name, selectedTenant.unit].filter(Boolean).join(" - ")
-              )} (inactive)</option>`,
+              )}${selectedTenant.active === false ? " (inactive)" : ""}</option>`,
             ]
           : []
       )
       .join("");
     const previousTenantId = draft.tenantId;
-    if (activeTenants.some((tenant) => tenant.id === preferredTenantId) || includeSelectedInactive) {
+    if (activeTenants.some((tenant) => tenant.id === preferredTenantId) || includeSelectedTenant) {
       selectedTenantId = preferredTenantId;
       if (!selectedInvoiceId) draft.tenantId = preferredTenantId;
     } else {
@@ -501,7 +538,7 @@
   function renderInvoiceEditor() {
     renderTenantOptions();
     draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
-    currentWorkflow = draft.invoiceType === "utility" ? "utility" : "rent";
+    currentWorkflow = workflowFromInvoiceType(draft.invoiceType);
     renderWorkflowHeader(draft.invoiceType);
     els.invoiceType.value = draft.invoiceType;
     els.utilityCalculator.hidden = !invoiceAllowsUtility(draft.invoiceType);
@@ -513,7 +550,7 @@
     els.previousBalance.value = normalizeNumberInput(draft.previousBalance);
     els.credits.value = normalizeNumberInput(draft.credits);
     els.invoiceNotes.value = draft.notes;
-    els.applyRentCharge.hidden = normalizeInvoiceType(draft.invoiceType) !== "rent";
+    els.applyRentCharge.hidden = normalizeInvoiceType(draft.invoiceType) === "utility";
     els.invoiceStatus.textContent = invoiceStatusLabel();
     els.saveState.textContent = invoiceStatusLabel();
     renderLineItems();
@@ -522,6 +559,7 @@
   }
 
   function invoiceStatusLabel() {
+    if (draft.status === "partial") return "Partially paid";
     if (draft.status === "paid") return "Paid";
     return selectedInvoiceId ? "Saved locally" : "Draft";
   }
@@ -534,6 +572,12 @@
       els.workflowCopy.textContent = "Calculate shared utility bills and save a separate utility invoice.";
       return;
     }
+    if (type === "security") {
+      els.workflowEyebrow.textContent = "Security deposit workflow";
+      els.invoiceHeading.textContent = "Security Deposit Invoice";
+      els.workflowCopy.textContent = "Create separate invoices for tenant security deposits.";
+      return;
+    }
     els.workflowEyebrow.textContent = "Rent workflow";
     els.invoiceHeading.textContent = "Rent Invoice";
     els.workflowCopy.textContent = "Create monthly rent invoices for active tenants.";
@@ -544,6 +588,8 @@
       const message =
         normalizeInvoiceType(draft.invoiceType) === "rent"
           ? "No charges yet. Apply the rent charge or add an item."
+          : normalizeInvoiceType(draft.invoiceType) === "security"
+            ? "No charges yet. Apply the security deposit charge or add an item."
           : "No charges yet. Apply a utility charge or add an item.";
       els.lineItems.innerHTML = `<div class="empty-state">${message}</div>`;
       return;
@@ -556,7 +602,7 @@
           <label>
             Type
             <select data-line-type="${index}">
-              ${["Rent", "Electric", "Water", "Gas", "Trash", "Internet", "Utility", "Fee", "Other"]
+              ${["Rent", "Security Deposit", "Electric", "Water", "Gas", "Trash", "Internet", "Utility", "Fee", "Other"]
                 .map(
                   (type) =>
                     `<option value="${type}" ${item.type === type ? "selected" : ""}>${type}</option>`
@@ -585,6 +631,7 @@
     const tenant = getTenant(invoice.tenantId);
     const landlord = state.landlord;
     const subtotal = sumLineItems(invoice.lineItems);
+    const paymentTotal = invoicePaymentTotal(invoice);
     const totalDue = calculateTotal(invoice);
 
     const tenantAddress = tenant?.address || "";
@@ -623,7 +670,7 @@
           ${docFact("Due date", formatDate(invoice.dueDate))}
           ${docFact("Billing period", invoice.billingPeriod)}
           ${docFact("Invoice type", invoiceTypeLabel(invoiceType))}
-          ${docFact("Status", invoice.status === "paid" ? "Paid" : "Open")}
+          ${docFact("Status", invoiceStatusText(invoice))}
         </div>
       </section>
 
@@ -652,9 +699,10 @@
       <section class="doc-summary" aria-label="Invoice totals">
         ${summaryRow("Subtotal", subtotal)}
         ${summaryRow("Previous balance", invoice.previousBalance)}
-        ${summaryRow("Credits / payments", -Number(invoice.credits || 0))}
+        ${summaryRow("Credits / adjustments", -Number(invoice.credits || 0))}
+        ${paymentTotal ? summaryRow("Payments received", -paymentTotal) : ""}
         <div class="doc-summary-row total">
-          <span>Total due</span>
+          <span>Balance due</span>
           <strong>${formatMoney(totalDue)}</strong>
         </div>
       </section>
@@ -803,25 +851,27 @@
   }
 
   function applyRentCharge() {
-    if (normalizeInvoiceType(draft.invoiceType) !== "rent") {
-      showToast("Use the rent invoice workflow first.");
+    const invoiceType = normalizeInvoiceType(draft.invoiceType);
+    if (invoiceType === "utility") {
+      showToast("Use the utility Apply charge button for utility invoices.");
       return;
     }
 
     const tenant = getTenant(draft.tenantId || selectedTenantId);
     if (!tenant) {
-      showToast("Select a tenant before applying rent.");
+      showToast("Select a tenant before applying the charge.");
       return;
     }
 
-    const rentLine = rentLineItems(tenant)[0];
-    const existingIndex = draft.lineItems.findIndex((item) => item.type === "Rent");
+    const systemLine = invoiceType === "security" ? securityDepositLineItems(tenant)[0] : rentLineItems(tenant)[0];
+    const systemType = invoiceType === "security" ? "Security Deposit" : "Rent";
+    const existingIndex = draft.lineItems.findIndex((item) => item.type === systemType);
     if (existingIndex >= 0) {
-      draft.lineItems[existingIndex] = rentLine;
+      draft.lineItems[existingIndex] = systemLine;
     } else {
-      draft.lineItems.unshift(rentLine);
+      draft.lineItems.unshift(systemLine);
     }
-    showToast("Rent charge applied.");
+    showToast(invoiceType === "security" ? "Security deposit charge applied." : "Rent charge applied.");
   }
 
   function renderInvoiceHistory() {
@@ -837,15 +887,15 @@
     els.invoiceHistory.innerHTML = sortedInvoices
       .map((invoice) => {
         const tenant = getTenant(invoice.tenantId);
-        const paid = invoice.status === "paid";
+        const paid = isInvoicePaid(invoice);
         const invoiceType = normalizeInvoiceType(invoice.invoiceType);
         return `
           <article class="invoice-card">
             <div>
               <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
-              <p>${escapeHtml(invoiceTypeLabel(invoiceType))} &middot; ${escapeHtml(invoice.billingPeriod || "")} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
-          paid ? "Paid" : "Open"
-        }</p>
+              <p>${escapeHtml(invoiceTypeLabel(invoiceType))} &middot; ${escapeHtml(invoice.billingPeriod || "")} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${escapeHtml(
+          invoiceStatusText(invoice)
+        )}</p>
             </div>
             <div class="card-actions">
               <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
@@ -878,7 +928,9 @@
         <article class="tenant-card${inactive ? " is-inactive" : ""}">
           <div>
             <h3>${escapeHtml(tenant.name)}</h3>
-            <p>${escapeHtml(tenant.unit || "No unit")} &middot; ${formatMoney(tenant.rent || 0)} rent${
+            <p>${escapeHtml(tenant.unit || "No unit")} &middot; ${formatMoney(tenant.rent || 0)} rent &middot; ${formatMoney(
+      tenant.securityDeposit || 0
+    )} deposit${
       inactive ? " &middot; Inactive" : ""
     }</p>
           </div>
@@ -949,12 +1001,18 @@
     return getActiveTenants().filter(isUtilityBillableTenant);
   }
 
+  function getSecurityDepositTenants() {
+    return getActiveTenants().filter((tenant) => toNumber(tenant.securityDeposit) > 0);
+  }
+
   function isUtilityBillableTenant(tenant) {
     return tenant?.active !== false && !tenant.excludeUtilities;
   }
 
   function selectableTenantsForCurrentWorkflow() {
-    return currentWorkflow === "utility" ? getUtilityBillableTenants() : getActiveTenants();
+    if (currentWorkflow === "utility") return getUtilityBillableTenants();
+    if (currentWorkflow === "security") return getSecurityDepositTenants();
+    return getActiveTenants();
   }
 
   function getInactiveTenants() {
@@ -967,6 +1025,10 @@
 
   function firstUtilityBillableTenantId() {
     return getUtilityBillableTenants()[0]?.id || "";
+  }
+
+  function firstSecurityDepositTenantId() {
+    return getSecurityDepositTenants()[0]?.id || "";
   }
 
   function applyTenantDefaultsToDraft(tenantId, options = {}) {
@@ -994,17 +1056,19 @@
   }
 
   function renderWorkflowPanels() {
-    if (!els.rentBatchPanel || !els.utilityBatchPanel) return;
+    if (!els.rentBatchPanel || !els.utilityBatchPanel || !els.securityDepositBatchPanel) return;
     const summary = currentCycleSummary();
-    const isRentWorkflow = currentWorkflow !== "utility";
-    els.rentBatchPanel.hidden = !isRentWorkflow;
-    els.utilityBatchPanel.hidden = isRentWorkflow;
+    els.rentBatchPanel.hidden = currentWorkflow !== "rent";
+    els.utilityBatchPanel.hidden = currentWorkflow !== "utility";
+    els.securityDepositBatchPanel.hidden = currentWorkflow !== "security";
 
-    if (isRentWorkflow) {
+    if (currentWorkflow === "rent") {
       renderRentBatchPanel(summary);
-    } else {
+    } else if (currentWorkflow === "utility") {
       fillCycleUtilityCalculationForm(cycleUtilityCalculation);
       renderUtilityBatchPanel(summary);
+    } else {
+      renderSecurityDepositBatchPanel(summary);
     }
   }
 
@@ -1032,6 +1096,35 @@
       invoice,
       createAction: `data-create-rent-invoice="${escapeAttr(tenant.id)}"`,
       createLabel: "Create",
+    });
+  }
+
+  function renderSecurityDepositBatchPanel(summary = currentCycleSummary()) {
+    els.securityDepositBatchHeading.textContent = `${summary.period} Security Deposits`;
+    els.securityDepositBatchCopy.textContent = `${summary.missingSecurityDeposits.length} active tenant${
+      summary.missingSecurityDeposits.length === 1 ? "" : "s"
+    } with security deposits still need invoices due ${formatDate(summary.dueDate)}.`;
+    els.createAllSecurityDepositInvoices.disabled = summary.missingSecurityDeposits.length === 0;
+    const tenants = getSecurityDepositTenants();
+    els.securityDepositBatchList.innerHTML = tenants.length
+      ? tenants.map((tenant) => renderSecurityDepositCycleRow(tenant, summary)).join("")
+      : `<div class="empty-state">No active tenants have a security deposit amount.</div>`;
+  }
+
+  function renderSecurityDepositCycleRow(tenant, summary) {
+    const invoice = currentSecurityDepositInvoiceForTenant(tenant.id, summary);
+    const status = invoice ? invoiceStatusText(invoice) : "Not created";
+    const detail = `${formatMoney(tenant.securityDeposit || 0)} security deposit`;
+    return renderCycleRow({
+      tenant,
+      title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
+      detail,
+      status,
+      amount: formatMoney(tenant.securityDeposit || 0),
+      invoice,
+      createAction: `data-create-security-deposit-invoice="${escapeAttr(tenant.id)}"`,
+      createLabel: "Create",
+      createDisabled: toNumber(tenant.securityDeposit) <= 0,
     });
   }
 
@@ -1083,8 +1176,8 @@
       ? `
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
           <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
-          invoice.status === "paid" ? "false" : "true"
-        }" type="button">${invoice.status === "paid" ? "Reopen" : "Mark paid"}</button>`
+          isInvoicePaid(invoice) ? "false" : "true"
+        }" type="button">${isInvoicePaid(invoice) ? "Reopen" : "Mark paid"}</button>`
       : `<button class="small-button" ${createAction} ${createDisabled ? "disabled" : ""} type="button">${createLabel}</button>`;
     return `
       <article class="cycle-row">
@@ -1105,8 +1198,20 @@
     return summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesUtility(invoice));
   }
 
+  function currentSecurityDepositInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
+    return summary.cycleInvoices.find(
+      (invoice) => invoice.tenantId === tenantId && invoiceIncludesSecurityDeposit(invoice)
+    );
+  }
+
   function invoiceStatusText(invoice) {
-    return invoice.status === "paid" ? "Paid" : "Open";
+    if (invoice.status === "paid") return "Paid";
+    if (invoice.status === "partial") return "Partially paid";
+    return "Open";
+  }
+
+  function isInvoicePaid(invoice) {
+    return invoice?.status === "paid";
   }
 
   function fillCycleUtilityCalculationForm(calculation) {
@@ -1136,6 +1241,7 @@
     const loadButton = event.target.closest("[data-load-invoice]");
     const rentButton = event.target.closest("[data-create-rent-invoice]");
     const utilityButton = event.target.closest("[data-create-utility-invoice]");
+    const securityButton = event.target.closest("[data-create-security-deposit-invoice]");
 
     if (paidButton || loadButton) {
       handleInvoiceHistoryClick(event);
@@ -1173,6 +1279,26 @@
       setSavedStateLabel(driveSaved);
       showToast(
         driveSaved ? "Utility invoice saved to browser and Drive." : "Utility invoice saved locally. Drive save skipped."
+      );
+      return;
+    }
+
+    if (securityButton) {
+      const invoice = createSecurityDepositInvoiceForTenant(securityButton.dataset.createSecurityDepositInvoice);
+      if (!invoice) return;
+      selectedInvoiceId = invoice.id;
+      selectedTenantId = invoice.tenantId;
+      draft = clone(invoice);
+      currentWorkflow = "security";
+      saveState("Created security deposit invoice");
+      renderAll();
+      setView("security", { preserveDraft: true });
+      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+      setSavedStateLabel(driveSaved);
+      showToast(
+        driveSaved
+          ? "Security deposit invoice saved to browser and Drive."
+          : "Security deposit invoice saved locally. Drive save skipped."
       );
     }
   }
@@ -1238,6 +1364,67 @@
     return invoice;
   }
 
+  async function createAllSecurityDepositInvoices() {
+    const summary = currentCycleSummary();
+    const tenants = summary.missingSecurityDeposits;
+    if (!tenants.length) {
+      showToast(`${summary.period} security deposit invoices are already complete.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Create ${tenants.length} security deposit invoice${tenants.length === 1 ? "" : "s"} for ${summary.period}?`
+    );
+    if (!confirmed) return;
+
+    const createdInvoices = tenants.map((tenant) => createSecurityDepositInvoiceForTenant(tenant.id)).filter(Boolean);
+    if (!createdInvoices.length) {
+      showToast("No security deposit invoices were created.");
+      return;
+    }
+
+    selectedInvoiceId = createdInvoices[0].id;
+    selectedTenantId = createdInvoices[0].tenantId;
+    draft = clone(createdInvoices[0]);
+    currentWorkflow = "security";
+    saveState(`Created ${createdInvoices.length} security deposit invoices`);
+    renderAll();
+    setView("security", { preserveDraft: true });
+    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving security deposit invoices");
+    setSavedStateLabel(driveSaved);
+    showToast(
+      driveSaved
+        ? `Created ${createdInvoices.length} security deposit invoices and uploaded PDFs.`
+        : `Created ${createdInvoices.length} security deposit invoices locally. Drive save skipped.`
+    );
+  }
+
+  function createSecurityDepositInvoiceForTenant(tenantId) {
+    const summary = currentCycleSummary();
+    const tenant = getTenant(tenantId);
+    if (!tenant || tenant.active === false || toNumber(tenant.securityDeposit) <= 0) {
+      showToast("Choose an active tenant with a security deposit before creating this invoice.");
+      return null;
+    }
+    const existing = currentSecurityDepositInvoiceForTenant(tenant.id, summary);
+    if (existing) {
+      openInvoiceById(existing.id, { message: "Security deposit invoice already exists." });
+      return null;
+    }
+
+    const invoice = createBlankInvoice(tenant.id, "security");
+    invoice.id = cryptoId();
+    invoice.dueDate = summary.dueDate;
+    invoice.billingPeriod = summary.period;
+    invoice.lineItems = securityDepositLineItems(tenant);
+    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : "";
+    invoice.paymentInstructions = state.landlord.paymentInstructions;
+    invoice.status = "open";
+    invoice.updatedAt = new Date().toISOString();
+    state.invoices.push(invoice);
+    return invoice;
+  }
+
   function createUtilityInvoiceForTenant(tenantId, baseCalculation = cycleUtilityCalculation) {
     const summary = currentCycleSummary();
     const tenant = getTenant(tenantId);
@@ -1285,7 +1472,7 @@
     selectedInvoiceId = invoice.id;
     selectedTenantId = invoice.tenantId;
     draft = clone(invoice);
-    currentWorkflow = normalizeInvoiceType(invoice.invoiceType) === "utility" ? "utility" : "rent";
+    currentWorkflow = workflowFromInvoiceType(invoice.invoiceType);
     if (currentWorkflow === "utility") {
       cycleUtilityCalculation = normalizeUtilityCalculation(invoice.utilityCalculation);
     }
@@ -1319,11 +1506,16 @@
     els.cycleOpenBalance.textContent = formatMoney(summary.openBalance);
     els.rentWorkflowCount.textContent = `${summary.missingRent.length} remaining`;
     els.utilityWorkflowCount.textContent = `${summary.missingUtilities.length} remaining`;
+    els.securityDepositWorkflowCount.textContent = `${summary.missingSecurityDeposits.length} remaining`;
     els.invoiceWorkflowCount.textContent = `${summary.cycleInvoices.length} saved this cycle`;
     els.cycleMissingRent.innerHTML = overviewTenantList(summary.missingRent, "Rent is complete for active tenants.");
     els.cycleMissingUtilities.innerHTML = overviewTenantList(
       summary.missingUtilities,
       "Utility invoices are complete for active tenants."
+    );
+    els.cycleMissingSecurityDeposits.innerHTML = overviewTenantList(
+      summary.missingSecurityDeposits,
+      "Security deposit invoices are complete for active tenants with deposit amounts."
     );
     els.overviewInvoiceList.innerHTML = overviewInvoiceList(summary.cycleInvoices);
   }
@@ -1335,12 +1527,16 @@
     const dueDate = toDateInput(firstDayOfMonth(rentCycleDate));
     const activeTenants = getActiveTenants();
     const utilityBillableTenants = getUtilityBillableTenants();
+    const securityDepositTenants = getSecurityDepositTenants();
     const cycleInvoices = state.invoices.filter((invoice) => isCurrentCycleInvoice(invoice, period, utilityPeriod));
     const missingRent = activeTenants.filter((tenant) => {
       return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesRent(invoice));
     });
     const missingUtilities = utilityBillableTenants.filter((tenant) => {
       return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesUtility(invoice));
+    });
+    const missingSecurityDeposits = securityDepositTenants.filter((tenant) => {
+      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesSecurityDeposit(invoice));
     });
 
     return {
@@ -1357,6 +1553,7 @@
       openInvoices: cycleInvoices.filter((invoice) => invoice.status !== "paid").length,
       missingRent,
       missingUtilities,
+      missingSecurityDeposits,
     };
   }
 
@@ -1367,6 +1564,7 @@
   function isCurrentCycleInvoice(invoice, rentPeriod, utilityPeriod) {
     if (invoiceIncludesUtility(invoice) && sameCycle(invoice.billingPeriod, utilityPeriod)) return true;
     if (invoiceIncludesRent(invoice) && sameCycle(invoice.billingPeriod, rentPeriod)) return true;
+    if (invoiceIncludesSecurityDeposit(invoice) && sameCycle(invoice.billingPeriod, rentPeriod)) return true;
     return false;
   }
 
@@ -1380,27 +1578,40 @@
   function invoiceIncludesRent(invoice) {
     const type = normalizeInvoiceType(invoice.invoiceType);
     if (type === "rent" || type === "combined") return true;
-    if (type === "utility") return false;
+    if (type === "utility" || type === "security") return false;
     return (invoice.lineItems || []).some((item) => item.type === "Rent");
   }
 
   function invoiceIncludesUtility(invoice) {
     const type = normalizeInvoiceType(invoice.invoiceType);
     if (type === "utility" || type === "combined") return true;
-    if (type === "rent") return false;
-    return (invoice.lineItems || []).some((item) => item.type !== "Rent");
+    if (type === "rent" || type === "security") return false;
+    return (invoice.lineItems || []).some((item) => item.type !== "Rent" && item.type !== "Security Deposit");
+  }
+
+  function invoiceIncludesSecurityDeposit(invoice) {
+    const type = normalizeInvoiceType(invoice.invoiceType);
+    if (type === "security") return true;
+    return (invoice.lineItems || []).some((item) => item.type === "Security Deposit");
   }
 
   function invoiceCategoryTotal(invoice, category) {
     const lineTotal = (invoice.lineItems || []).reduce((total, item) => {
       const isRent = item.type === "Rent";
+      const isSecurityDeposit = item.type === "Security Deposit";
+      const isUtility = !isRent && !isSecurityDeposit;
       if (category === "rent" && isRent) return total + toNumber(item.amount);
-      if (category === "utility" && !isRent) return total + toNumber(item.amount);
+      if (category === "utility" && isUtility) return total + toNumber(item.amount);
+      if (category === "security" && isSecurityDeposit) return total + toNumber(item.amount);
       return total;
     }, 0);
     if (lineTotal) return lineTotal;
     const type = normalizeInvoiceType(invoice.invoiceType);
-    if ((category === "rent" && type === "rent") || (category === "utility" && type === "utility")) {
+    if (
+      (category === "rent" && type === "rent") ||
+      (category === "utility" && type === "utility") ||
+      (category === "security" && type === "security")
+    ) {
       return calculateTotal(invoice);
     }
     return 0;
@@ -1428,14 +1639,14 @@
             <div>
               <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
               <p>${escapeHtml(invoiceTypeLabel(invoice.invoiceType))} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
-                invoice.status === "paid" ? "Paid" : "Open"
+                escapeHtml(invoiceStatusText(invoice))
               }</p>
             </div>
             <div class="card-actions">
               <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
               <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
-                invoice.status === "paid" ? "false" : "true"
-              }" type="button">${invoice.status === "paid" ? "Reopen" : "Mark paid"}</button>
+                isInvoicePaid(invoice) ? "false" : "true"
+              }" type="button">${isInvoicePaid(invoice) ? "Reopen" : "Mark paid"}</button>
             </div>
           </article>`;
       })
@@ -1480,14 +1691,20 @@
 
   function startNewInvoice(invoiceType = currentWorkflow || draft?.invoiceType || "rent", options = {}) {
     selectedInvoiceId = "";
-    const nextType = normalizeInvoiceType(invoiceType) === "utility" ? "utility" : "rent";
+    const nextType = workflowFromInvoiceType(invoiceType);
     currentWorkflow = nextType;
     const currentTenant = getTenant(selectedTenantId);
-    const fallbackTenantId = nextType === "utility" ? firstUtilityBillableTenantId() : firstActiveTenantId();
+    const fallbackTenantId =
+      nextType === "utility"
+        ? firstUtilityBillableTenantId()
+        : nextType === "security"
+          ? firstSecurityDepositTenantId()
+          : firstActiveTenantId();
     const canKeepTenant =
       currentTenant &&
       currentTenant.active !== false &&
-      (nextType !== "utility" || isUtilityBillableTenant(currentTenant));
+      (nextType !== "utility" || isUtilityBillableTenant(currentTenant)) &&
+      (nextType !== "security" || toNumber(currentTenant.securityDeposit) > 0);
     const tenantId = canKeepTenant ? selectedTenantId : fallbackTenantId;
     selectedTenantId = tenantId || "";
     draft = createBlankInvoice(selectedTenantId, nextType);
@@ -1501,16 +1718,103 @@
   }
 
   function setInvoicePaid(invoiceId, paid) {
+    if (paid) {
+      openPaymentDialog(invoiceId);
+      return;
+    }
+    reopenInvoice(invoiceId);
+  }
+
+  function openPaymentDialog(invoiceId) {
     const invoice = state.invoices.find((item) => item.id === invoiceId);
     if (!invoice) return;
-    invoice.status = paid ? "paid" : "open";
+    const balance = calculateTotal(invoice);
+    if (balance <= 0) {
+      invoice.status = "paid";
+      invoice.updatedAt = new Date().toISOString();
+      saveState("Marked invoice paid");
+      renderAll();
+      showToast("Invoice marked paid.");
+      return;
+    }
+    paymentDialogInvoiceId = invoice.id;
+    els.partialPaymentFields.hidden = true;
+    els.partialPaymentAmount.value = "";
+    els.partialPaymentAmount.max = String(balance);
+    els.paymentDialogCopy.textContent = `Balance due is ${formatMoney(balance)}. Choose Full or enter a partial amount.`;
+    els.paymentDialog.hidden = false;
+    els.paymentFull.focus();
+  }
+
+  function showPartialPaymentEntry() {
+    const invoice = state.invoices.find((item) => item.id === paymentDialogInvoiceId);
+    if (!invoice) return;
+    const balance = calculateTotal(invoice);
+    els.partialPaymentFields.hidden = false;
+    els.partialPaymentAmount.value = "";
+    els.partialPaymentAmount.max = String(balance);
+    els.partialPaymentAmount.focus();
+  }
+
+  function closePaymentDialog() {
+    paymentDialogInvoiceId = "";
+    els.paymentDialog.hidden = true;
+    els.partialPaymentFields.hidden = true;
+    els.partialPaymentAmount.value = "";
+  }
+
+  function recordInvoicePayment(invoiceId, mode) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return;
+    const balance = calculateTotal(invoice);
+    if (balance <= 0) {
+      invoice.status = "paid";
+      invoice.updatedAt = new Date().toISOString();
+      saveState("Marked invoice paid");
+      closePaymentDialog();
+      renderAll();
+      showToast("Invoice marked paid.");
+      return;
+    }
+    const amount = mode === "full" ? balance : toNumber(els.partialPaymentAmount.value);
+    if (amount <= 0) {
+      showToast("Enter a payment amount greater than zero.");
+      return;
+    }
+    if (amount > balance) {
+      showToast(`Payment cannot exceed the ${formatMoney(balance)} balance.`);
+      return;
+    }
+
+    invoice.payments = normalizeInvoicePayments(invoice.payments).concat({
+      id: cryptoId(),
+      date: toDateInput(new Date()),
+      amount,
+      method: mode === "full" ? "Full payment" : "Partial payment",
+    });
+    invoice.status = calculateTotal(invoice) <= 0 ? "paid" : "partial";
     invoice.updatedAt = new Date().toISOString();
     if (selectedInvoiceId === invoiceId) {
       draft = clone(invoice);
     }
-    saveState(paid ? "Marked invoice paid" : "Reopened invoice");
+    saveState(invoice.status === "paid" ? "Marked invoice paid" : "Recorded partial payment");
+    closePaymentDialog();
     renderAll();
-    showToast(paid ? "Invoice marked paid." : "Invoice reopened.");
+    showToast(invoice.status === "paid" ? "Invoice marked paid." : "Partial payment recorded.");
+  }
+
+  function reopenInvoice(invoiceId) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return;
+    invoice.status = "open";
+    invoice.payments = [];
+    invoice.updatedAt = new Date().toISOString();
+    if (selectedInvoiceId === invoiceId) {
+      draft = clone(invoice);
+    }
+    saveState("Reopened invoice");
+    renderAll();
+    showToast("Invoice reopened.");
   }
 
   function handleInvoiceHistoryClick(event) {
@@ -1568,6 +1872,7 @@
       email: els.tenantEmail.value.trim(),
       phone: formatPhoneNumber(els.tenantPhone.value),
       rent: toNumber(els.tenantRent.value),
+      securityDeposit: toNumber(els.tenantSecurityDeposit.value),
       utilityUnits: toNumber(els.tenantUtilityUnits.value),
       active: els.tenantActive.checked,
       excludeUtilities: els.tenantExcludeUtilities.checked,
@@ -1615,6 +1920,7 @@
       email: "",
       phone: "",
       rent: "",
+      securityDeposit: "",
       utilityUnits: 1,
       active: true,
       excludeUtilities: false,
@@ -1628,6 +1934,7 @@
     els.tenantEmail.value = tenant.email || "";
     els.tenantPhone.value = formatPhoneNumber(tenant.phone);
     els.tenantRent.value = normalizeNumberInput(tenant.rent);
+    els.tenantSecurityDeposit.value = normalizeNumberInput(tenant.securityDeposit);
     els.tenantUtilityUnits.value = normalizeNumberInput(tenant.utilityUnits || 1);
     els.tenantMemo.value = tenant.memo || "";
     els.tenantActive.checked = tenant.active !== false;
@@ -1785,6 +2092,7 @@
       utilityCalculation: normalizeUtilityCalculation(draft.utilityCalculation),
       previousBalance: toNumber(draft.previousBalance),
       credits: toNumber(draft.credits),
+      payments: normalizeInvoicePayments(draft.payments),
     };
   }
 
@@ -1807,6 +2115,7 @@
       utilityCalculation: defaultUtilityCalculation(tenant),
       previousBalance: 0,
       credits: 0,
+      payments: [],
       notes: "",
       paymentInstructions: state.landlord.paymentInstructions,
       status: "open",
@@ -1817,6 +2126,7 @@
   function defaultLineItems(tenant, invoiceType = "rent") {
     const normalizedType = normalizeInvoiceType(invoiceType);
     if (normalizedType === "utility") return [];
+    if (normalizedType === "security") return securityDepositLineItems(tenant);
     return rentLineItems(tenant);
   }
 
@@ -1828,45 +2138,76 @@
     return items.length ? items : [{ type: "Rent", description: "Rent", amount: 0 }];
   }
 
+  function securityDepositLineItems(tenant) {
+    const items = [];
+    if (toNumber(tenant?.securityDeposit) > 0) {
+      items.push({
+        type: "Security Deposit",
+        description: `${tenant.unit ? tenant.unit + " " : ""}Security deposit`,
+        amount: tenant.securityDeposit,
+      });
+    }
+    return items.length ? items : [{ type: "Security Deposit", description: "Security deposit", amount: 0 }];
+  }
+
   function lineItemsForInvoiceType(tenant, invoiceType, currentItems = []) {
     const normalizedType = normalizeInvoiceType(invoiceType);
-    const nonRentItems = (currentItems || []).filter((item) => item.type !== "Rent");
+    const nonSystemItems = (currentItems || []).filter(
+      (item) => item.type !== "Rent" && item.type !== "Security Deposit"
+    );
     if (normalizedType === "rent") return rentLineItems(tenant);
-    if (normalizedType === "utility") return nonRentItems;
-    return [...rentLineItems(tenant), ...nonRentItems];
+    if (normalizedType === "security") return securityDepositLineItems(tenant);
+    if (normalizedType === "utility") return nonSystemItems;
+    return [...rentLineItems(tenant), ...nonSystemItems];
   }
 
   function defaultManualLineItem(invoiceType) {
     const normalizedType = normalizeInvoiceType(invoiceType);
     if (normalizedType === "rent") return { type: "Fee", description: "", amount: 0 };
+    if (normalizedType === "security") return { type: "Security Deposit", description: "", amount: 0 };
     return { type: "Utility", description: "", amount: 0 };
   }
 
   function normalizeInvoiceType(value) {
-    return ["rent", "utility", "combined"].includes(value) ? value : "rent";
+    return ["rent", "utility", "security", "combined"].includes(value) ? value : "rent";
   }
 
   function invoiceAllowsUtility(invoiceType) {
-    return normalizeInvoiceType(invoiceType) !== "rent";
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    return normalizedType === "utility" || normalizedType === "combined";
   }
 
   function invoiceTypeLabel(invoiceType) {
     const normalizedType = normalizeInvoiceType(invoiceType);
     if (normalizedType === "utility") return "Utility Invoice";
+    if (normalizedType === "security") return "Security Deposit Invoice";
     if (normalizedType === "combined") return "Combined Invoice";
     return "Rent Invoice";
   }
 
   function inferInvoiceType(invoice) {
-    if (["rent", "utility", "combined"].includes(invoice?.invoiceType)) return invoice.invoiceType;
+    if (["rent", "utility", "security", "combined"].includes(invoice?.invoiceType)) return invoice.invoiceType;
     const lineItems = Array.isArray(invoice?.lineItems) ? invoice.lineItems : [];
     const hasRent = lineItems.some((item) => item?.type === "Rent");
+    const hasSecurityDeposit = lineItems.some((item) => item?.type === "Security Deposit");
     const hasUtility = lineItems.some((item) =>
-      item?.generatedUtility || ["Electric", "Water", "Gas", "Trash", "Internet", "Utility"].includes(item?.type)
+      item?.generatedUtility || utilityLineTypes().includes(item?.type)
     );
     if (hasRent && hasUtility) return "combined";
     if (hasUtility) return "utility";
+    if (hasSecurityDeposit) return "security";
     return "rent";
+  }
+
+  function workflowFromInvoiceType(invoiceType) {
+    const normalizedType = normalizeInvoiceType(invoiceType);
+    if (normalizedType === "utility") return "utility";
+    if (normalizedType === "security") return "security";
+    return "rent";
+  }
+
+  function utilityLineTypes() {
+    return ["Electric", "Water", "Gas", "Trash", "Internet", "Utility"];
   }
 
   function defaultUtilityCalculation(tenant) {
@@ -1933,8 +2274,16 @@
   }
 
   function calculateTotal(invoice) {
-    const total = sumLineItems(invoice.lineItems) + toNumber(invoice.previousBalance) - toNumber(invoice.credits);
+    const total =
+      sumLineItems(invoice.lineItems) +
+      toNumber(invoice.previousBalance) -
+      toNumber(invoice.credits) -
+      invoicePaymentTotal(invoice);
     return Math.max(0, roundMoney(total));
+  }
+
+  function invoicePaymentTotal(invoice) {
+    return roundMoney(normalizeInvoicePayments(invoice?.payments).reduce((total, payment) => total + payment.amount, 0));
   }
 
   function sumLineItems(lineItems) {
@@ -1950,7 +2299,8 @@
 
   function setSavedStateLabel(driveSaved) {
     if (!els.invoiceStatus || !els.saveState) return;
-    const label = draft.status === "paid" ? "Paid" : driveSaved ? "Saved to Drive" : "Saved locally";
+    const label =
+      draft.status === "paid" ? "Paid" : draft.status === "partial" ? "Partially paid" : driveSaved ? "Saved to Drive" : "Saved locally";
     els.invoiceStatus.textContent = label;
     els.saveState.textContent = label;
   }
@@ -2461,6 +2811,7 @@
     const invoiceType = normalizeInvoiceType(invoice.invoiceType);
     const utilityDetails = utilityCalculationDetails(invoice.utilityCalculation);
     const subtotal = sumLineItems(invoice.lineItems);
+    const paymentTotal = invoicePaymentTotal(invoice);
     const totalDue = calculateTotal(invoice);
     const commands = [];
 
@@ -2489,7 +2840,7 @@
     factY = pdfFact(commands, 350, factY, "Due date", formatDate(invoice.dueDate));
     factY = pdfFact(commands, 350, factY, "Billing period", invoice.billingPeriod);
     factY = pdfFact(commands, 350, factY, "Invoice type", invoiceTypeLabel(invoiceType));
-    pdfFact(commands, 350, factY, "Status", invoice.status === "paid" ? "Paid" : "Open");
+    pdfFact(commands, 350, factY, "Status", invoiceStatusText(invoice));
 
     let tableY = 560;
     pdfText(commands, 36, tableY, "TYPE", 7.5, "F2", [0.38, 0.44, 0.42]);
@@ -2510,9 +2861,12 @@
     let summaryY = tableY - 12;
     summaryY = pdfSummary(commands, 390, summaryY, "Subtotal", formatMoney(subtotal), false);
     summaryY = pdfSummary(commands, 390, summaryY, "Previous balance", formatMoney(invoice.previousBalance), false);
-    summaryY = pdfSummary(commands, 390, summaryY, "Credits / payments", formatMoney(-Number(invoice.credits || 0)), false);
+    summaryY = pdfSummary(commands, 390, summaryY, "Credits / adjustments", formatMoney(-Number(invoice.credits || 0)), false);
+    if (paymentTotal) {
+      summaryY = pdfSummary(commands, 390, summaryY, "Payments received", formatMoney(-paymentTotal), false);
+    }
     pdfLine(commands, 390, summaryY + 4, 576, summaryY + 4, 1.2, [0.12, 0.2, 0.18]);
-    pdfSummary(commands, 390, summaryY - 18, "Total due", formatMoney(totalDue), true);
+    pdfSummary(commands, 390, summaryY - 18, "Balance due", formatMoney(totalDue), true);
 
     const notesY = 222;
     const footerBlocks = [];
@@ -2776,7 +3130,7 @@
 
   function looksLikeTenantRecord(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-    return ["rent", "address", "payments", "active", "utilityUnits", "occupancyUnits", "excludeUtilities"].some((key) =>
+    return ["rent", "securityDeposit", "address", "payments", "active", "utilityUnits", "occupancyUnits", "excludeUtilities"].some((key) =>
       Object.prototype.hasOwnProperty.call(value, key)
     );
   }
@@ -2795,6 +3149,7 @@
       email: value.email || "",
       phone: formatPhoneNumber(value.phone),
       rent: toNumber(value.rent),
+      securityDeposit: toNumber(value.securityDeposit),
       utilityUnits: toNumber(value.utilityUnits || value.occupancyUnits || 1),
       excludeUtilities: hasExcludeUtilities ? Boolean(value.excludeUtilities) : undefined,
       active: Object.prototype.hasOwnProperty.call(value, "active") ? Boolean(value.active) : true,
@@ -2846,6 +3201,7 @@
           email: tenant.email || existing.email || "",
           phone: tenant.phone || formatPhoneNumber(existing.phone) || "",
           unit: tenant.unit || existing.unit || "",
+          securityDeposit: tenant.securityDeposit || existing.securityDeposit || 0,
           excludeUtilities: hasImportedUtilityExclusion ? tenant.excludeUtilities : Boolean(existing.excludeUtilities),
         };
       } else {
@@ -2947,6 +3303,7 @@
       phone: formatPhoneNumber(tenant?.phone),
       active: tenant?.active === false ? false : true,
       excludeUtilities: Boolean(tenant?.excludeUtilities),
+      securityDeposit: toNumber(tenant?.securityDeposit),
       utilityUnits: toNumber(tenant?.utilityUnits || 1),
       utilities: toNumber(tenant?.utilities),
     };
@@ -2956,6 +3313,7 @@
     return {
       ...invoice,
       invoiceType: normalizeInvoiceType(inferInvoiceType(invoice)),
+      status: normalizeInvoiceStatus(invoice?.status),
       utilityCalculation: normalizeUtilityCalculation(invoice?.utilityCalculation),
       lineItems: Array.isArray(invoice?.lineItems)
         ? invoice.lineItems.map((item) => ({
@@ -2964,7 +3322,24 @@
             generatedUtility: Boolean(item?.generatedUtility),
           }))
         : [],
+      payments: normalizeInvoicePayments(invoice?.payments),
     };
+  }
+
+  function normalizeInvoiceStatus(status) {
+    return ["open", "partial", "paid"].includes(status) ? status : "open";
+  }
+
+  function normalizeInvoicePayments(payments) {
+    if (!Array.isArray(payments)) return [];
+    return payments
+      .map((payment) => ({
+        id: payment?.id || cryptoId(),
+        date: String(payment?.date || "").trim(),
+        amount: toNumber(payment?.amount),
+        method: String(payment?.method || "Payment").trim(),
+      }))
+      .filter((payment) => payment.amount > 0);
   }
 
   function registerServiceWorker() {
@@ -3031,12 +3406,13 @@
   function invoiceNumberPrefix(invoiceType) {
     const normalizedType = normalizeInvoiceType(invoiceType);
     if (normalizedType === "utility") return "UTL";
+    if (normalizedType === "security") return "DEP";
     if (normalizedType === "combined") return "INV";
     return "RNT";
   }
 
   function isGeneratedInvoiceNumber(value) {
-    return /^(INV|RNT|UTL)-\d{4}-(\d{2}-)?\d{4}$/.test(value || "");
+    return /^(INV|RNT|UTL|DEP)-\d{4}-(\d{2}-)?\d{4}$/.test(value || "");
   }
 
   function docFact(label, value) {

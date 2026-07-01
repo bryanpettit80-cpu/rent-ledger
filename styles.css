@@ -177,7 +177,7 @@ button {
 
 .nav-tabs {
   display: inline-grid;
-  grid-template-columns: repeat(6, minmax(86px, 1fr));
+  grid-template-columns: repeat(7, minmax(86px, 1fr));
   justify-self: end;
   min-height: var(--tap);
   border: 1px solid var(--line);
@@ -1042,6 +1042,34 @@ button:focus-visible {
   transform: translateY(0);
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(24, 37, 34, 0.48);
+}
+
+.modal-panel {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 430px);
+  border: 1px solid rgba(32, 51, 47, 0.18);
+  border-radius: var(--radius);
+  padding: 22px;
+  background: var(--surface);
+  box-shadow: 0 22px 72px rgba(24, 37, 34, 0.24);
+}
+
+.partial-payment-fields {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
 @media (max-width: 1120px) {
   .workspace,
   .overview-layout,
@@ -1084,6 +1112,10 @@ button:focus-visible {
   }
 
   .nav-tab:nth-last-child(-n + 3) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav-tab:nth-child(n + 7) {
     border-bottom: 0;
   }
 
@@ -1195,7 +1227,7 @@ button:focus-visible {
 
   .nav-tab {
     padding: 0 8px;
-    font-size: 0.86rem;
+    font-size: 0.78rem;
   }
 
   .button-row {
@@ -1220,6 +1252,7 @@ button:focus-visible {
   .editor-panel,
   .view-invoices,
   .panel-header,
+  .modal-backdrop,
   .toast {
     display: none !important;
   }

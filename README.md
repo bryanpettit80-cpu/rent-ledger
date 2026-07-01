@@ -10,16 +10,18 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 
 ## What It Does
 
-- Creates separate `Rent invoice` and `Utility invoice` records.
+- Creates separate `Rent invoice`, `Utility invoice`, and `Security Deposit invoice` records.
 - Stores tenant profiles, landlord contact details, and payment instructions.
 - Calculates utility reimbursements from actual utility bills.
 - Starts on a current-cycle overview that shows what still needs to be billed.
 - Creates all remaining rent invoices for the current cycle from the Rent workflow.
 - Creates all remaining utility invoices for the current cycle from one utility calculation.
+- Creates security deposit invoices for active tenants with saved deposit amounts.
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
 - Shows a live invoice preview before printing or saving.
 - Prints invoices to paper or PDF through the browser.
 - Generates invoice PDFs and saves them to Google Drive when Drive is connected.
+- Records full and partial invoice payments from the saved-invoice lists without adding payment fields to the invoice editor.
 - Saves invoice history in the current browser.
 - Keeps local browser state and can sync that state to Google Drive.
 - Separates active and inactive tenants.
@@ -69,10 +71,11 @@ The app sets the current rent cycle automatically:
 - Beginning on the 11th, the current rent cycle moves to the next calendar month.
 - Rent invoices use the current rent cycle as the billing period.
 - Utility invoices use the immediately preceding rent cycle as the billing period.
+- Security deposit invoices use the current rent cycle as the billing period.
 - Rent and utility invoices are due on the 1st day of the rent cycle month.
 - Generated invoice numbers include the two-digit billing month.
 
-Example: on June 28, 2026, the rent billing period is `July 2026`, the rent invoice number starts with `RNT-2026-07-`, the utility billing period is `June 2026`, the utility invoice number starts with `UTL-2026-06-`, and both invoices are due `July 1, 2026`.
+Example: on June 28, 2026, the rent billing period is `July 2026`, the rent invoice number starts with `RNT-2026-07-`, the utility billing period is `June 2026`, the utility invoice number starts with `UTL-2026-06-`, the security deposit invoice number starts with `DEP-2026-07-`, and all three invoice types are due `July 1, 2026`.
 
 ### Rent Invoice
 
@@ -101,9 +104,21 @@ Utility invoices:
 - Show the allocation math on the invoice preview.
 - Let you open an individual utility invoice afterward if you need a one-off adjustment.
 
+### Security Deposit Invoice
+
+Use the Security Deposits workflow for tenant deposit charges.
+
+Security deposit invoices:
+
+- Use invoice numbers like `DEP-2026-07-0001`.
+- Use the tenant's saved security deposit amount.
+- Hide the utility calculator.
+- Show active tenants with a saved deposit amount first so you can create one missing deposit invoice or use `Create all security deposits`.
+- Keep `Apply charge` inside `Edit charges` for the rare case where you need to refresh the deposit line from the selected tenant's current profile.
+
 ### Editing Charges And Preview
 
-Normal rent and utility invoices should not require manual charge editing. The raw line-item editor is behind `Edit charges` so the primary workflow stays focused on tenant, period, amount, save, and print.
+Normal rent, utility, and security deposit invoices should not require manual charge editing. The raw line-item editor is behind `Edit charges` so the primary workflow stays focused on tenant, period, amount, save, and print.
 
 On mobile, the invoice document preview is hidden until you tap `Preview`. Desktop screens continue to show the editor and preview side by side.
 
@@ -115,7 +130,10 @@ The invoice header uses these states:
 - `Saved locally`: the invoice is saved in the browser.
 - `Saved to Drive`: the invoice is saved in the browser and the invoice PDF/state upload completed in Google Drive.
 - `Unsaved changes`: a saved invoice was edited after its last save.
-- `Paid`: the saved invoice has been marked paid from the Invoices page or overview invoice list.
+- `Partially paid`: one or more partial payments have been recorded and a balance remains.
+- `Paid`: the saved invoice has been fully paid from the Invoices page, overview invoice list, or workflow row.
+
+Use `Mark paid` from a saved invoice card or workflow row to open the payment popup. Choose `Full` to record the remaining balance, or choose `Partial` and enter the amount received. Fully paid invoices can be reopened, which clears the recorded invoice payments and returns the invoice to `Open`.
 
 ## Utility Calculations
 
@@ -168,6 +186,7 @@ Active tenants:
 - Appear in the invoice tenant selector.
 - Have an `Invoice` action in the tenant directory.
 - Can be excluded from utility billing while remaining active for rent invoices.
+- Can store a security deposit amount for the Security Deposits workflow.
 
 Inactive tenants:
 
@@ -211,7 +230,7 @@ The invoice screen has one `Save` button. It saves the current invoice to the br
 Rent Ledger/Invoices/
 ```
 
-The Rent workflow's `Create all rent invoices` button and the Utility workflow's `Create all utilities` button create all missing invoices locally first, then upload the updated state and each generated PDF to Drive when Drive is connected.
+The Rent workflow's `Create all rent invoices` button, the Utility workflow's `Create all utilities` button, and the Security Deposits workflow's `Create all security deposits` button create all missing invoices locally first, then upload the updated state and each generated PDF to Drive when Drive is connected.
 
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 

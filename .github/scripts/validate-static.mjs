@@ -47,6 +47,12 @@ assert(files.html.includes('id="rentBatchPanel"'), "Rent workflow must include t
 assert(files.html.includes('id="createAllRentInvoices"'), "Rent workflow must include the rent batch button.");
 assert(files.html.includes('id="utilityBatchPanel"'), "Utility workflow must include the utility cycle panel.");
 assert(files.html.includes('id="createAllUtilityInvoices"'), "Utility workflow must include the utility batch button.");
+assert(files.html.includes('data-view="security"'), "Navigation must include the Security Deposits page.");
+assert(files.html.includes('id="securityDepositBatchPanel"'), "Security Deposits workflow must include the deposit cycle panel.");
+assert(files.html.includes('id="createAllSecurityDepositInvoices"'), "Security Deposits workflow must include the deposit batch button.");
+assert(files.html.includes('id="tenantSecurityDeposit"'), "Tenant profile must include a security deposit field.");
+assert(files.html.includes('id="paymentDialog"'), "Saved invoices must use a payment popup for full or partial payments.");
+assert(files.html.includes('id="paymentPartial"'), "Payment popup must include a Partial button.");
 assert(files.html.includes('id="advancedCharges"'), "Manual charge editing should live behind the advanced charge control.");
 assert(files.html.includes('id="togglePreview"'), "Mobile workflow must include the preview toggle.");
 assert(files.html.includes('placeholder="July 2026"'), "Billing period placeholder should use month and year.");
@@ -61,13 +67,17 @@ assert(!files.html.includes("Start new"), "Invoice editor must not include Start
 assert(files.app.includes("function applyRentCharge"), "app.js must define applyRentCharge.");
 assert(files.app.includes("async function createAllRentInvoices"), "app.js must define the rent batch flow.");
 assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js must define the utility batch flow.");
+assert(files.app.includes("async function createAllSecurityDepositInvoices"), "app.js must define the security deposit batch flow.");
+assert(files.app.includes("function recordInvoicePayment"), "app.js must define invoice payment recording.");
+assert(files.app.includes("function openPaymentDialog"), "app.js must open the payment dialog from Mark paid.");
 assert(files.app.includes("function setPreviewVisible"), "app.js must define mobile preview visibility handling.");
 assert(files.app.includes("function setInvoicePaid"), "Saved invoices must support mark-paid/reopen actions.");
+assert(files.app.includes('invoice.status = calculateTotal(invoice) <= 0 ? "paid" : "partial";'), "Partial payments must leave invoices in partial status.");
 assert(files.app.includes("function utilityCalculationForTenant"), "Utility billing should preserve shared bill totals when switching tenants.");
 assert(files.app.includes("function invoiceNumberPeriodDate"), "Generated invoice numbers must use the invoice billing month.");
 assert(files.app.includes("return `${prefix}-${year}-${month}-${String(next).padStart(4, \"0\")}`;"), "Generated invoice numbers must include the two-digit billing month.");
 assert(files.app.includes(".replace(/^\\d{1,2}\\s*[-/]\\s*/, \"\")"), "Cycle matching must handle old labels without month numbers.");
-assert(files.app.includes("/^(INV|RNT|UTL)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Generated invoice detection must accept old and month-coded invoice numbers.");
+assert(files.app.includes("/^(INV|RNT|UTL|DEP)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Generated invoice detection must accept old and month-coded invoice numbers.");
 assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
@@ -75,9 +85,12 @@ assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "s
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
+assert(files.readme.includes("Create all security deposits"), "README must document the security deposit batch flow.");
 assert(files.readme.includes("RNT-2026-07-"), "README must document month-coded rent invoice numbers.");
 assert(files.readme.includes("UTL-2026-06-"), "README must document month-coded utility invoice numbers.");
+assert(files.readme.includes("DEP-2026-07-"), "README must document month-coded deposit invoice numbers.");
 assert(files.readme.includes("Invoice States"), "README must document invoice states.");
+assert(files.readme.includes("Partially paid"), "README must document partial invoice payment state.");
 assert(files.readme.includes("Saved locally"), "README must document the saved-local state.");
 assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
 

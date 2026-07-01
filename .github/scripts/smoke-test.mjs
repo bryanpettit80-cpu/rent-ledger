@@ -56,6 +56,7 @@ try {
   const expectedUtilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
   const expectedRentInvoiceNumber = invoiceNumberPattern("RNT", rentCycleDate);
   const expectedUtilityInvoiceNumber = invoiceNumberPattern("UTL", previousMonthDate(rentCycleDate));
+  const expectedDepositInvoiceNumber = invoiceNumberPattern("DEP", rentCycleDate);
   await page.route("**/sw.js", (route) => route.abort());
   await page.goto(baseUrl, { waitUntil: "networkidle" });
 
@@ -88,6 +89,7 @@ try {
           email: "",
           phone: "",
           rent: 850,
+          securityDeposit: 850,
           utilityUnits: 1,
           active: true,
           excludeUtilities: false,
@@ -101,6 +103,7 @@ try {
           email: "",
           phone: "",
           rent: 900,
+          securityDeposit: 900,
           utilityUnits: 2,
           active: true,
           excludeUtilities: false,
@@ -123,16 +126,21 @@ try {
     workflowButtons: [...document.querySelectorAll(".workflow-button span")].map((button) => button.textContent.trim()),
     rentCount: document.getElementById("rentWorkflowCount")?.textContent?.trim(),
     utilityCount: document.getElementById("utilityWorkflowCount")?.textContent?.trim(),
+    securityDepositCount: document.getElementById("securityDepositWorkflowCount")?.textContent?.trim(),
   }));
   assert(overviewState.overviewActive, "App should open on the Overview workflow page.");
   assert(
-    overviewState.workflowButtons.join("|") === "Create Rent Invoices|Calculate Utilities|Review Saved Invoices",
+    overviewState.workflowButtons.join("|") === "Create Rent Invoices|Calculate Utilities|Security Deposits|Review Saved Invoices",
     `Unexpected overview workflow buttons: ${overviewState.workflowButtons.join("|")}.`
   );
   assert(overviewState.rentCount === "2 remaining", `Expected 2 rent invoices remaining, got ${overviewState.rentCount}.`);
   assert(
     overviewState.utilityCount === "2 remaining",
     `Expected 2 utility invoices remaining, got ${overviewState.utilityCount}.`
+  );
+  assert(
+    overviewState.securityDepositCount === "2 remaining",
+    `Expected 2 security deposit invoices remaining, got ${overviewState.securityDepositCount}.`
   );
 
   await page.click('[data-view="rent"]');
@@ -383,12 +391,135 @@ try {
   );
 
   await page.click("#utilityAllocationList [data-toggle-paid-invoice]");
+  await page.waitForFunction(() => document.getElementById("paymentDialog")?.hidden === false);
+  const paymentDialogState = await page.evaluate(() => ({
+    copy: document.getElementById("paymentDialogCopy")?.textContent?.trim(),
+    buttons: [...document.querySelectorAll("#paymentDialog .button-row button")].map((button) =>
+      button.textContent.trim()
+    ),
+    partialHidden: document.getElementById("partialPaymentFields")?.hidden,
+  }));
+  assert(paymentDialogState.copy.includes("Balance due"), `Unexpected payment dialog copy: ${paymentDialogState.copy}.`);
+  assert(
+    paymentDialogState.buttons.join("|") === "Full|Partial|Cancel",
+    `Unexpected payment dialog buttons: ${paymentDialogState.buttons.join("|")}.`
+  );
+  assert(paymentDialogState.partialHidden === true, "Partial payment amount should be hidden before Partial is selected.");
+  await page.click("#paymentFull");
   const paidState = await page.evaluate(() => ({
     firstCardText: document.querySelector("#utilityAllocationList .cycle-row")?.textContent.trim(),
     firstToggle: document.querySelector("#utilityAllocationList [data-toggle-paid-invoice]")?.textContent.trim(),
   }));
   assert(paidState.firstCardText.includes("Paid"), `Expected first invoice card to show Paid: ${paidState.firstCardText}.`);
   assert(paidState.firstToggle === "Reopen", `Expected Reopen after marking paid, got ${paidState.firstToggle}.`);
+
+  await page.click('[data-view="security"]');
+  await page.waitForFunction(
+    () => window.location.hash === "#security" && document.getElementById("invoiceType")?.value === "security"
+  );
+  const securityState = await page.evaluate(() => {
+    const utility = document.getElementById("utilityCalculator");
+    return {
+      invoiceType: document.getElementById("invoiceType")?.value,
+      invoiceNumber: document.getElementById("invoiceNumber")?.value,
+      billingPeriod: document.getElementById("billingPeriod")?.value,
+      securityPanelHidden: document.getElementById("securityDepositBatchPanel")?.hidden,
+      securityRows: document.querySelectorAll("#securityDepositBatchList .cycle-row").length,
+      utilityHidden: utility?.hidden,
+      utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+      lineAmounts: [...document.querySelectorAll("[data-line-amount]")].map((input) => input.value),
+      batchButton: document.getElementById("createAllSecurityDepositInvoices")?.textContent?.trim(),
+    };
+  });
+  assert(securityState.invoiceType === "security", `Expected security invoice, got ${securityState.invoiceType}.`);
+  assert(
+    expectedDepositInvoiceNumber.test(securityState.invoiceNumber || ""),
+    `Expected deposit invoice number to match ${expectedDepositInvoiceNumber}, got ${securityState.invoiceNumber}.`
+  );
+  assert(
+    securityState.billingPeriod === expectedRentPeriod,
+    `Expected deposit period ${expectedRentPeriod}, got ${securityState.billingPeriod}.`
+  );
+  assert(securityState.securityPanelHidden === false, "Security tab must show the security deposit cycle panel.");
+  assert(securityState.securityRows === 2, `Expected 2 security deposit rows, got ${securityState.securityRows}.`);
+  assert(securityState.utilityHidden && securityState.utilityDisplay === "none", "Security tab must hide the utility calculator.");
+  assert(
+    securityState.lineTypes.join("|") === "Security Deposit",
+    `Expected one Security Deposit line, got ${securityState.lineTypes.join("|")}.`
+  );
+  assert(securityState.lineAmounts[0] === "850", `Expected deposit amount 850, got ${securityState.lineAmounts[0]}.`);
+  assert(
+    securityState.batchButton === "Create all security deposits",
+    `Expected security deposit batch button, got ${securityState.batchButton}.`
+  );
+
+  await page.click("#createAllSecurityDepositInvoices");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices?.filter((invoice) => invoice.invoiceType === "security").length === 2;
+  });
+  const securityBatchState = await page.evaluate(() => ({
+    hash: window.location.hash,
+    rows: [...document.querySelectorAll("#securityDepositBatchList .cycle-row")].map((row) => row.textContent.trim()),
+    invoiceNumbers: (JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [])
+      .filter((invoice) => invoice.invoiceType === "security")
+      .map((invoice) => invoice.invoiceNumber),
+    buttons: [...document.querySelectorAll("#securityDepositBatchList [data-toggle-paid-invoice]")].map((button) =>
+      button.textContent.trim()
+    ),
+  }));
+  assert(securityBatchState.hash === "#security", `Security batch should stay on the security workflow, got ${securityBatchState.hash}.`);
+  assert(securityBatchState.rows.length === 2, `Expected 2 generated security rows, got ${securityBatchState.rows.length}.`);
+  assert(securityBatchState.rows.every((row) => row.includes("Open")), `Security rows should show Open after batch create.`);
+  assert(
+    securityBatchState.invoiceNumbers.every((number) => expectedDepositInvoiceNumber.test(number)),
+    `Batch deposit invoice numbers did not match ${expectedDepositInvoiceNumber}: ${securityBatchState.invoiceNumbers.join(", ")}.`
+  );
+  assert(
+    securityBatchState.buttons.every((label) => label === "Mark paid"),
+    `Expected Mark paid buttons, got ${securityBatchState.buttons.join("|")}.`
+  );
+
+  await page.click("#securityDepositBatchList [data-toggle-paid-invoice]");
+  await page.waitForFunction(() => document.getElementById("paymentDialog")?.hidden === false);
+  await page.click("#paymentPartial");
+  await page.fill("#partialPaymentAmount", "100");
+  await page.click("#paymentPartialSave");
+  const partialState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const invoice = (state.invoices || []).find((item) => item.invoiceType === "security" && item.tenantId === "andrew");
+    return {
+      firstCardText: document.querySelector("#securityDepositBatchList .cycle-row")?.textContent.trim(),
+      firstToggle: document.querySelector("#securityDepositBatchList [data-toggle-paid-invoice]")?.textContent.trim(),
+      status: invoice?.status,
+      paymentTotal: (invoice?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0),
+      remainingTotal:
+        (invoice?.lineItems || []).reduce((total, item) => total + Number(item.amount || 0), 0) -
+        (invoice?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0),
+    };
+  });
+  assert(
+    partialState.firstCardText.includes("Partially paid"),
+    `Expected first security invoice to show Partially paid: ${partialState.firstCardText}.`
+  );
+  assert(partialState.firstToggle === "Mark paid", `Expected Mark paid after partial payment, got ${partialState.firstToggle}.`);
+  assert(partialState.status === "partial", `Expected stored partial status, got ${partialState.status}.`);
+  assert(partialState.paymentTotal === 100, `Expected stored payment total 100, got ${partialState.paymentTotal}.`);
+  assert(partialState.remainingTotal === 750, `Expected remaining balance 750, got ${partialState.remainingTotal}.`);
+
+  await page.click("#securityDepositBatchList [data-toggle-paid-invoice]");
+  await page.waitForFunction(() => document.getElementById("paymentDialog")?.hidden === false);
+  await page.click("#paymentFull");
+  const fullAfterPartialState = await page.evaluate(() => ({
+    firstCardText: document.querySelector("#securityDepositBatchList .cycle-row")?.textContent.trim(),
+    firstToggle: document.querySelector("#securityDepositBatchList [data-toggle-paid-invoice]")?.textContent.trim(),
+  }));
+  assert(
+    fullAfterPartialState.firstCardText.includes("Paid"),
+    `Expected first security invoice to show Paid after full payment: ${fullAfterPartialState.firstCardText}.`
+  );
+  assert(fullAfterPartialState.firstToggle === "Reopen", `Expected Reopen after full payment, got ${fullAfterPartialState.firstToggle}.`);
 
   await page.click('[data-view="settings"]');
   const settingsState = await page.evaluate(() => ({

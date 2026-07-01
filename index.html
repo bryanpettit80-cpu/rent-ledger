@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v25" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v26" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v25" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v26" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,11 +23,11 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v25</strong>
+              <strong id="splashVersion">rent-ledger-v26</strong>
             </div>
             <div>
               <span>Commit date</span>
-              <strong id="splashCommitDate">June 28, 2026</strong>
+              <strong id="splashCommitDate">July 1, 2026</strong>
             </div>
           </div>
           <button class="primary-button" id="enterApp" type="button">Open dashboard</button>
@@ -47,6 +47,7 @@
           <button class="nav-tab is-active" data-view="overview" type="button">Overview</button>
           <button class="nav-tab" data-view="rent" type="button">Rent</button>
           <button class="nav-tab" data-view="utility" type="button">Utilities</button>
+          <button class="nav-tab" data-view="security" type="button">Security Deposits</button>
           <button class="nav-tab" data-view="invoices" type="button">Invoices</button>
           <button class="nav-tab" data-view="tenants" type="button">Tenants</button>
           <button class="nav-tab" data-view="settings" type="button">Settings</button>
@@ -101,6 +102,10 @@
                   <span>Calculate Utilities</span>
                   <strong id="utilityWorkflowCount">0 remaining</strong>
                 </button>
+                <button class="workflow-button" id="startSecurityDepositWorkflow" type="button">
+                  <span>Security Deposits</span>
+                  <strong id="securityDepositWorkflowCount">0 remaining</strong>
+                </button>
                 <button class="workflow-button" id="reviewInvoicesWorkflow" type="button">
                   <span>Review Saved Invoices</span>
                   <strong id="invoiceWorkflowCount">0 saved this cycle</strong>
@@ -123,6 +128,10 @@
                 <div>
                   <h3>Missing utility invoices</h3>
                   <div class="overview-list" id="cycleMissingUtilities"></div>
+                </div>
+                <div>
+                  <h3>Missing security deposits</h3>
+                  <div class="overview-list" id="cycleMissingSecurityDeposits"></div>
                 </div>
               </div>
             </section>
@@ -150,6 +159,22 @@
               <button class="primary-button" id="createAllRentInvoices" type="button">Create all rent invoices</button>
             </div>
             <div class="cycle-list" id="rentBatchList"></div>
+          </section>
+
+          <section class="panel cycle-workflow-panel" id="securityDepositBatchPanel" hidden>
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Security deposit cycle</p>
+                <h1 id="securityDepositBatchHeading">Security Deposits</h1>
+                <p class="panel-copy" id="securityDepositBatchCopy">
+                  Review active tenants before creating security deposit invoices.
+                </p>
+              </div>
+              <button class="primary-button" id="createAllSecurityDepositInvoices" type="button">
+                Create all security deposits
+              </button>
+            </div>
+            <div class="cycle-list" id="securityDepositBatchList"></div>
           </section>
 
           <section class="panel cycle-workflow-panel" id="utilityBatchPanel" hidden>
@@ -312,7 +337,7 @@
                     <input id="previousBalance" name="previousBalance" type="number" min="0" step="0.01" />
                   </label>
                   <label>
-                    Credits or payments
+                    Credits or adjustments
                     <input id="credits" name="credits" type="number" min="0" step="0.01" />
                   </label>
                 </div>
@@ -425,10 +450,14 @@
                     <input id="tenantPhone" type="tel" autocomplete="tel" placeholder="(757) 555-1212" />
                   </label>
                 </div>
-                <div class="grid two">
+                <div class="grid three">
                   <label>
                     Monthly rent
                     <input id="tenantRent" type="number" min="0" step="0.01" />
+                  </label>
+                  <label>
+                    Security deposit
+                    <input id="tenantSecurityDeposit" type="number" min="0" step="0.01" />
                   </label>
                   <label>
                     Utility occupancy units
@@ -566,8 +595,29 @@
       </main>
 
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="modal-backdrop" id="paymentDialog" hidden>
+        <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="paymentDialogHeading">
+          <div>
+            <p class="eyebrow">Payment</p>
+            <h2 id="paymentDialogHeading">Record payment</h2>
+            <p class="panel-copy" id="paymentDialogCopy">Choose how much was paid.</p>
+          </div>
+          <div class="button-row">
+            <button class="primary-button" id="paymentFull" type="button">Full</button>
+            <button class="secondary-button" id="paymentPartial" type="button">Partial</button>
+            <button class="secondary-button" id="paymentCancel" type="button">Cancel</button>
+          </div>
+          <div class="partial-payment-fields" id="partialPaymentFields" hidden>
+            <label>
+              Partial payment amount
+              <input id="partialPaymentAmount" type="number" min="0.01" step="0.01" inputmode="decimal" />
+            </label>
+            <button class="primary-button" id="paymentPartialSave" type="button">Save partial payment</button>
+          </div>
+        </section>
+      </div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v25" defer></script>
+    <script src="app.js?v=rent-ledger-v26" defer></script>
   </body>
 </html>
