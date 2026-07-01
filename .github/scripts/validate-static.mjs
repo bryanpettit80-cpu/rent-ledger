@@ -73,6 +73,7 @@ assert(files.app.includes("function openPaymentDialog"), "app.js must open the p
 assert(files.app.includes("function paymentDialogCopy"), "Payment dialog must explain charges, credits, payments, and balance.");
 assert(files.app.includes("function invoiceCycleAmount"), "Workflow rows must show current invoice balance when an invoice exists.");
 assert(files.app.includes("function invoiceCycleDetail"), "Workflow rows must show applied credits or payments.");
+assert(!files.app.includes(".slice(0, 8)"), "Overview cycle invoice list must not be capped at eight invoices.");
 assert(files.app.includes("Payment cannot exceed the current balance due"), "Overpayment errors must reference current balance due.");
 assert(files.app.includes("function markInvoiceDriveSaved"), "app.js must persist invoice Drive PDF metadata.");
 assert(files.app.includes("invoiceSavedToDrive(draft)"), "Saved invoice labels must use persisted Drive metadata.");

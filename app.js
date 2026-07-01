@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v28";
+  const APP_VERSION = "rent-ledger-v29";
   const APP_COMMIT_DATE = "July 1, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -1651,7 +1651,6 @@
     if (!invoices.length) return `<div class="empty-state">No invoices saved for this billing period yet.</div>`;
     return [...invoices]
       .sort((a, b) => `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`))
-      .slice(0, 8)
       .map((invoice) => {
         const tenant = getTenant(invoice.tenantId);
         return `

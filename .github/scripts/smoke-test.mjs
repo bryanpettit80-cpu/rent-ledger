@@ -586,6 +586,77 @@ try {
   );
   assert(fullAfterPartialState.firstToggle === "Reopen", `Expected Reopen after full payment, got ${fullAfterPartialState.firstToggle}.`);
 
+  await page.evaluate(
+    ({ rentPeriod, utilityPeriod }) => {
+      const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+      const tenantIds = (state.tenants || []).map((tenant) => tenant.id);
+      const tenantFor = (index) => tenantIds[index % tenantIds.length] || "andrew";
+      const invoices = [];
+      for (let index = 0; index < 12; index += 1) {
+        const isUtility = index % 3 === 1;
+        const isSecurity = index % 3 === 2;
+        const prefix = isUtility ? "UTL" : isSecurity ? "DEP" : "RNT";
+        const invoiceType = isUtility ? "utility" : isSecurity ? "security" : "rent";
+        const lineType = isUtility ? "Utility" : isSecurity ? "Security Deposit" : "Rent";
+        invoices.push({
+          id: `overview-current-${index}`,
+          tenantId: tenantFor(index),
+          invoiceType,
+          invoiceNumber: `${prefix}-2099-01-${String(index + 1).padStart(4, "0")}`,
+          issueDate: "2026-07-01",
+          dueDate: "2026-07-01",
+          billingPeriod: isUtility ? utilityPeriod : rentPeriod,
+          lineItems: [{ type: lineType, description: `${lineType} overview test`, amount: 100 + index }],
+          previousBalance: 0,
+          credits: 0,
+          payments: [],
+          status: "open",
+          updatedAt: "2026-07-01T12:00:00.000Z",
+        });
+      }
+      invoices.push({
+        id: "overview-old-cycle",
+        tenantId: tenantFor(0),
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2099-01-9999",
+        issueDate: "2026-05-01",
+        dueDate: "2026-05-01",
+        billingPeriod: "May 2026",
+        lineItems: [{ type: "Rent", description: "Old rent", amount: 999 }],
+        previousBalance: 0,
+        credits: 0,
+        payments: [],
+        status: "open",
+        updatedAt: "2026-05-01T12:00:00.000Z",
+      });
+      state.invoices = invoices;
+      localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+    },
+    { rentPeriod: expectedRentPeriod, utilityPeriod: expectedUtilityPeriod }
+  );
+  await page.evaluate(() => {
+    window.location.hash = "#overview";
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.querySelectorAll("#overviewInvoiceList .invoice-card").length === 12);
+  const fullOverviewState = await page.evaluate(() => ({
+    savedCount: document.getElementById("invoiceWorkflowCount")?.textContent?.trim(),
+    invoiceCards: document.querySelectorAll("#overviewInvoiceList .invoice-card").length,
+    overviewText: document.getElementById("overviewInvoiceList")?.textContent || "",
+  }));
+  assert(
+    fullOverviewState.savedCount === "12 saved this cycle",
+    `Expected overview to count 12 current-cycle invoices, got ${fullOverviewState.savedCount}.`
+  );
+  assert(
+    fullOverviewState.invoiceCards === 12,
+    `Expected overview to render all 12 current-cycle invoices, got ${fullOverviewState.invoiceCards}.`
+  );
+  assert(
+    !fullOverviewState.overviewText.includes("RNT-2099-01-9999"),
+    "Overview should not include old-cycle invoices."
+  );
+
   await page.click('[data-view="settings"]');
   const settingsState = await page.evaluate(() => ({
     buttons: [...document.querySelectorAll(".drive-tools .button-row button")].map((button) => button.textContent.trim()),
