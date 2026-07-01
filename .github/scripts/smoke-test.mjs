@@ -602,6 +602,7 @@ try {
     [
       "Not connected. Click Connect Drive.",
       "Google Drive confirmation was cancelled or expired.",
+      "Google confirmation needed for saving invoice...",
       "Google confirmation needed for saving security deposit invoices...",
     ].includes(settingsState.driveStatus),
     `Unexpected Drive status: ${settingsState.driveStatus}.`
