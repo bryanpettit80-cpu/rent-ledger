@@ -60,6 +60,7 @@
   let driveTokenClient = null;
   let driveSyncTimer = 0;
   let googleIdentityLoadPromise = null;
+  let draftRenderFrame = 0;
 
   const els = {};
 
@@ -268,11 +269,7 @@
     ].forEach((input) => {
       input.addEventListener("input", () => {
         syncDraftFromForm();
-        renderUtilityCalculation();
-        renderInvoicePreview();
-        renderTotals();
-        renderOverview();
-        markDirty();
+        scheduleDraftRender({ includeUtility: true, includeOverview: true });
       });
     });
 
@@ -300,10 +297,7 @@
         cycleUtilityCalculation = readCycleUtilityCalculation();
         draft.utilityCalculation = utilityCalculationForTenant(getTenant(draft.tenantId), cycleUtilityCalculation);
         fillUtilityCalculationForm(draft.utilityCalculation);
-        renderUtilityCalculation();
-        renderUtilityBatchPanel();
-        renderInvoicePreview();
-        renderTotals();
+        scheduleDraftRender({ includeUtility: true, includeWorkflowPanels: true });
       });
     });
     els.rentBatchList.addEventListener("click", handleCycleActionClick);
@@ -335,10 +329,7 @@
     els.lineItems.addEventListener("input", (event) => {
       if (!event.target.closest(".line-item")) return;
       syncDraftFromForm();
-      renderInvoicePreview();
-      renderTotals();
-      renderOverview();
-      markDirty();
+      scheduleDraftRender({ includeOverview: true });
     });
 
     els.lineItems.addEventListener("click", (event) => {
@@ -348,9 +339,7 @@
       const index = Number(removeButton.dataset.removeLine);
       draft.lineItems.splice(index, 1);
       renderLineItems();
-      renderInvoicePreview();
-      renderTotals();
-      markDirty();
+      renderDraftNow();
     });
 
     els.tenantForm.addEventListener("submit", saveTenant);
@@ -388,15 +377,43 @@
   }
 
   function renderAll() {
+    cancelScheduledDraftRender();
+    const summary = currentCycleSummary();
     renderTenantOptions();
-    renderInvoiceEditor();
+    renderInvoiceEditor(summary);
     renderInvoicePreview();
     renderInvoiceHistory();
-    renderWorkflowPanels();
-    renderOverview();
+    renderWorkflowPanels(summary);
+    renderOverview(summary);
     renderTenants();
     renderMetrics();
     renderBackupStatus();
+  }
+
+  function scheduleDraftRender(options = {}) {
+    cancelScheduledDraftRender();
+    draftRenderFrame = window.requestAnimationFrame(() => {
+      draftRenderFrame = 0;
+      renderDraftNow(options);
+    });
+  }
+
+  function cancelScheduledDraftRender() {
+    if (!draftRenderFrame) return;
+    window.cancelAnimationFrame(draftRenderFrame);
+    draftRenderFrame = 0;
+  }
+
+  function renderDraftNow(options = {}) {
+    cancelScheduledDraftRender();
+    const { includeUtility = false, includeOverview = false, includeWorkflowPanels = false } = options;
+    const summary = includeOverview || includeWorkflowPanels ? currentCycleSummary() : null;
+    if (includeUtility) renderUtilityCalculation(summary);
+    renderInvoicePreview();
+    renderTotals();
+    if (includeWorkflowPanels) renderWorkflowPanels(summary);
+    if (includeOverview) renderOverview(summary);
+    markDirty();
   }
 
   function setInitialView() {
@@ -535,7 +552,7 @@
     }
   }
 
-  function renderInvoiceEditor() {
+  function renderInvoiceEditor(summary = currentCycleSummary()) {
     renderTenantOptions();
     draft.invoiceType = normalizeInvoiceType(draft.invoiceType);
     currentWorkflow = workflowFromInvoiceType(draft.invoiceType);
@@ -554,7 +571,7 @@
     els.invoiceStatus.textContent = invoiceStatusLabel();
     els.saveState.textContent = invoiceStatusLabel();
     renderLineItems();
-    renderUtilityCalculation();
+    renderUtilityCalculation(summary);
     renderTotals();
   }
 
@@ -745,29 +762,28 @@
     els.utilityOther.value = normalizeNumberInput(current.other);
   }
 
-  function renderUtilityCalculation() {
+  function renderUtilityCalculation(summary = currentCycleSummary()) {
     if (!invoiceAllowsUtility(draft.invoiceType)) {
       els.utilityCalcResult.textContent = "Utility allocation is available for utility invoices.";
-      renderUtilityBatchSummary();
+      renderUtilityBatchSummary(summary);
       return;
     }
     const details = utilityCalculationDetails(draft.utilityCalculation || {});
     if (!details.hasTotal) {
       els.utilityCalcResult.textContent = "Enter bills and units to calculate a utility share.";
-      renderUtilityBatchSummary();
+      renderUtilityBatchSummary(summary);
       return;
     }
     els.utilityCalcResult.textContent = `${details.explanation} ${details.billSummary}`;
-    renderUtilityBatchSummary();
+    renderUtilityBatchSummary(summary);
   }
 
-  function renderUtilityBatchSummary() {
+  function renderUtilityBatchSummary(summary = currentCycleSummary()) {
     if (!els.utilityBatchSummary) return;
     if (!invoiceAllowsUtility(draft.invoiceType)) {
       els.utilityBatchSummary.textContent = "";
       return;
     }
-    const summary = currentCycleSummary();
     const remaining = summary.missingUtilities.length;
     els.utilityBatchSummary.textContent = remaining
       ? `${remaining} utility-billable tenant${remaining === 1 ? "" : "s"} still need ${summary.utilityPeriod} invoices.`
@@ -835,20 +851,13 @@
       return;
     }
 
-    selectedInvoiceId = createdInvoices[0].id;
-    selectedTenantId = createdInvoices[0].tenantId;
-    draft = clone(createdInvoices[0]);
-    currentWorkflow = "utility";
-    saveState(`Created ${createdInvoices.length} utility invoices`);
-    renderAll();
-    setView("utility", { preserveDraft: true });
-    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving utility invoices");
-    setSavedStateLabel(driveSaved);
-    showToast(
-      driveSaved
-        ? `Created ${createdInvoices.length} utility invoices and uploaded PDFs.`
-        : `Created ${createdInvoices.length} utility invoices locally. Drive save skipped.`
-    );
+    await finalizeCreatedInvoices(createdInvoices, {
+      workflow: "utility",
+      saveReason: `Created ${createdInvoices.length} utility invoices`,
+      driveActionLabel: "saving utility invoices",
+      driveSuccessMessage: `Created ${createdInvoices.length} utility invoices and uploaded PDFs.`,
+      localMessage: `Created ${createdInvoices.length} utility invoices locally. Drive save skipped.`,
+    });
   }
 
   function applyRentCharge() {
@@ -881,32 +890,8 @@
       return;
     }
 
-    const sortedInvoices = [...state.invoices].sort((a, b) => {
-      return `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`);
-    });
-
-    els.invoiceHistory.innerHTML = sortedInvoices
-      .map((invoice) => {
-        const tenant = getTenant(invoice.tenantId);
-        const paid = isInvoicePaid(invoice);
-        const invoiceType = normalizeInvoiceType(invoice.invoiceType);
-        return `
-          <article class="invoice-card">
-            <div>
-              <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
-              <p>${escapeHtml(invoiceTypeLabel(invoiceType))} &middot; ${escapeHtml(invoice.billingPeriod || "")} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${escapeHtml(
-          invoiceStatusText(invoice)
-        )}</p>
-            </div>
-            <div class="card-actions">
-              <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
-              <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
-          paid ? "false" : "true"
-        }" type="button">${paid ? "Reopen" : "Mark paid"}</button>
-              <button class="small-button danger" data-delete-invoice="${escapeAttr(invoice.id)}" type="button">Delete</button>
-            </div>
-          </article>`;
-      })
+    els.invoiceHistory.innerHTML = sortInvoicesByNewest(state.invoices)
+      .map((invoice) => renderInvoiceCard(invoice, { showBillingPeriod: true, allowDelete: true }))
       .join("");
   }
 
@@ -1056,9 +1041,8 @@
     };
   }
 
-  function renderWorkflowPanels() {
+  function renderWorkflowPanels(summary = currentCycleSummary()) {
     if (!els.rentBatchPanel || !els.utilityBatchPanel || !els.securityDepositBatchPanel) return;
-    const summary = currentCycleSummary();
     els.rentBatchPanel.hidden = currentWorkflow !== "rent";
     els.utilityBatchPanel.hidden = currentWorkflow !== "utility";
     els.securityDepositBatchPanel.hidden = currentWorkflow !== "security";
@@ -1079,8 +1063,9 @@
       summary.missingRent.length === 1 ? "" : "s"
     } still need rent invoices due ${formatDate(summary.dueDate)}.`;
     els.createAllRentInvoices.disabled = summary.missingRent.length === 0;
-    els.rentBatchList.innerHTML = getActiveTenants().length
-      ? getActiveTenants().map((tenant) => renderRentCycleRow(tenant, summary)).join("")
+    const tenants = getActiveTenants();
+    els.rentBatchList.innerHTML = tenants.length
+      ? tenants.map((tenant) => renderRentCycleRow(tenant, summary)).join("")
       : `<div class="empty-state">No active tenants are available for rent billing.</div>`;
   }
 
@@ -1271,16 +1256,13 @@
     if (rentButton) {
       const invoice = createRentInvoiceForTenant(rentButton.dataset.createRentInvoice);
       if (!invoice) return;
-      selectedInvoiceId = invoice.id;
-      selectedTenantId = invoice.tenantId;
-      draft = clone(invoice);
-      currentWorkflow = "rent";
-      saveState("Created rent invoice");
-      renderAll();
-      setView("rent", { preserveDraft: true });
-      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
-      setSavedStateLabel(driveSaved);
-      showToast(driveSaved ? "Rent invoice saved to browser and Drive." : "Rent invoice saved locally. Drive save skipped.");
+      await finalizeCreatedInvoices([invoice], {
+        workflow: "rent",
+        saveReason: "Created rent invoice",
+        driveActionLabel: "saving rent invoice",
+        driveSuccessMessage: "Rent invoice saved to browser and Drive.",
+        localMessage: "Rent invoice saved locally. Drive save skipped.",
+      });
       return;
     }
 
@@ -1288,38 +1270,26 @@
       cycleUtilityCalculation = readCycleUtilityCalculation();
       const invoice = createUtilityInvoiceForTenant(utilityButton.dataset.createUtilityInvoice, cycleUtilityCalculation);
       if (!invoice) return;
-      selectedInvoiceId = invoice.id;
-      selectedTenantId = invoice.tenantId;
-      draft = clone(invoice);
-      currentWorkflow = "utility";
-      saveState("Created utility invoice");
-      renderAll();
-      setView("utility", { preserveDraft: true });
-      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
-      setSavedStateLabel(driveSaved);
-      showToast(
-        driveSaved ? "Utility invoice saved to browser and Drive." : "Utility invoice saved locally. Drive save skipped."
-      );
+      await finalizeCreatedInvoices([invoice], {
+        workflow: "utility",
+        saveReason: "Created utility invoice",
+        driveActionLabel: "saving utility invoice",
+        driveSuccessMessage: "Utility invoice saved to browser and Drive.",
+        localMessage: "Utility invoice saved locally. Drive save skipped.",
+      });
       return;
     }
 
     if (securityButton) {
       const invoice = createSecurityDepositInvoiceForTenant(securityButton.dataset.createSecurityDepositInvoice);
       if (!invoice) return;
-      selectedInvoiceId = invoice.id;
-      selectedTenantId = invoice.tenantId;
-      draft = clone(invoice);
-      currentWorkflow = "security";
-      saveState("Created security deposit invoice");
-      renderAll();
-      setView("security", { preserveDraft: true });
-      const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
-      setSavedStateLabel(driveSaved);
-      showToast(
-        driveSaved
-          ? "Security deposit invoice saved to browser and Drive."
-          : "Security deposit invoice saved locally. Drive save skipped."
-      );
+      await finalizeCreatedInvoices([invoice], {
+        workflow: "security",
+        saveReason: "Created security deposit invoice",
+        driveActionLabel: "saving security deposit invoice",
+        driveSuccessMessage: "Security deposit invoice saved to browser and Drive.",
+        localMessage: "Security deposit invoice saved locally. Drive save skipped.",
+      });
     }
   }
 
@@ -1342,46 +1312,46 @@
       return;
     }
 
-    selectedInvoiceId = createdInvoices[0].id;
-    selectedTenantId = createdInvoices[0].tenantId;
-    draft = clone(createdInvoices[0]);
-    currentWorkflow = "rent";
-    saveState(`Created ${createdInvoices.length} rent invoices`);
+    await finalizeCreatedInvoices(createdInvoices, {
+      workflow: "rent",
+      saveReason: `Created ${createdInvoices.length} rent invoices`,
+      driveActionLabel: "saving rent invoices",
+      driveSuccessMessage: `Created ${createdInvoices.length} rent invoices and uploaded PDFs.`,
+      localMessage: `Created ${createdInvoices.length} rent invoices locally. Drive save skipped.`,
+    });
+  }
+
+  async function finalizeCreatedInvoices(invoices, options) {
+    if (!invoices.length) return false;
+    const { workflow, saveReason, driveActionLabel, driveSuccessMessage, localMessage } = options;
+    selectInvoiceForWorkflow(invoices[0], workflow);
+    saveState(saveReason);
     renderAll();
-    setView("rent", { preserveDraft: true });
-    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving rent invoices");
+    setView(workflow, { preserveDraft: true });
+    const driveSaved = await saveInvoiceArtifactsToDrive(invoices, driveActionLabel);
     setSavedStateLabel(driveSaved);
-    showToast(
-      driveSaved
-        ? `Created ${createdInvoices.length} rent invoices and uploaded PDFs.`
-        : `Created ${createdInvoices.length} rent invoices locally. Drive save skipped.`
-    );
+    showToast(driveSaved ? driveSuccessMessage : localMessage);
+    return driveSaved;
+  }
+
+  function selectInvoiceForWorkflow(invoice, workflow) {
+    selectedInvoiceId = invoice.id;
+    selectedTenantId = invoice.tenantId;
+    draft = clone(invoice);
+    currentWorkflow = workflow;
   }
 
   function createRentInvoiceForTenant(tenantId) {
-    const summary = currentCycleSummary();
-    const tenant = getTenant(tenantId);
-    if (!tenant || tenant.active === false) {
-      showToast("Choose an active tenant before creating a rent invoice.");
-      return null;
-    }
-    const existing = currentRentInvoiceForTenant(tenant.id, summary);
-    if (existing) {
-      openInvoiceById(existing.id, { message: "Rent invoice already exists." });
-      return null;
-    }
-
-    const invoice = createBlankInvoice(tenant.id, "rent");
-    invoice.id = cryptoId();
-    invoice.dueDate = summary.dueDate;
-    invoice.billingPeriod = summary.period;
-    invoice.lineItems = rentLineItems(tenant);
-    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "rent" ? draft.notes || "" : "";
-    invoice.paymentInstructions = state.landlord.paymentInstructions;
-    invoice.status = "open";
-    invoice.updatedAt = new Date().toISOString();
-    state.invoices.push(invoice);
-    return invoice;
+    return createCycleInvoiceForTenant(tenantId, {
+      invoiceType: "rent",
+      isEligible: (tenant) => tenant?.active !== false,
+      invalidMessage: "Choose an active tenant before creating a rent invoice.",
+      findExisting: currentRentInvoiceForTenant,
+      duplicateMessage: "Rent invoice already exists.",
+      billingPeriod: (summary) => summary.period,
+      lineItems: rentLineItems,
+      notes: () => (normalizeInvoiceType(draft.invoiceType) === "rent" ? draft.notes || "" : ""),
+    });
   }
 
   async function createAllSecurityDepositInvoices() {
@@ -1403,85 +1373,83 @@
       return;
     }
 
-    selectedInvoiceId = createdInvoices[0].id;
-    selectedTenantId = createdInvoices[0].tenantId;
-    draft = clone(createdInvoices[0]);
-    currentWorkflow = "security";
-    saveState(`Created ${createdInvoices.length} security deposit invoices`);
-    renderAll();
-    setView("security", { preserveDraft: true });
-    const driveSaved = await saveBatchInvoiceArtifactsToDrive(createdInvoices, "saving security deposit invoices");
-    setSavedStateLabel(driveSaved);
-    showToast(
-      driveSaved
-        ? `Created ${createdInvoices.length} security deposit invoices and uploaded PDFs.`
-        : `Created ${createdInvoices.length} security deposit invoices locally. Drive save skipped.`
-    );
+    await finalizeCreatedInvoices(createdInvoices, {
+      workflow: "security",
+      saveReason: `Created ${createdInvoices.length} security deposit invoices`,
+      driveActionLabel: "saving security deposit invoices",
+      driveSuccessMessage: `Created ${createdInvoices.length} security deposit invoices and uploaded PDFs.`,
+      localMessage: `Created ${createdInvoices.length} security deposit invoices locally. Drive save skipped.`,
+    });
   }
 
   function createSecurityDepositInvoiceForTenant(tenantId) {
-    const summary = currentCycleSummary();
-    const tenant = getTenant(tenantId);
-    if (!tenant || tenant.active === false || toNumber(tenant.securityDeposit) <= 0) {
-      showToast("Choose an active tenant with a security deposit before creating this invoice.");
-      return null;
-    }
-    const existing = currentSecurityDepositInvoiceForTenant(tenant.id, summary);
-    if (existing) {
-      openInvoiceById(existing.id, { message: "Security deposit invoice already exists." });
-      return null;
-    }
-
-    const invoice = createBlankInvoice(tenant.id, "security");
-    invoice.id = cryptoId();
-    invoice.dueDate = summary.dueDate;
-    invoice.billingPeriod = summary.period;
-    invoice.lineItems = securityDepositLineItems(tenant);
-    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : "";
-    invoice.paymentInstructions = state.landlord.paymentInstructions;
-    invoice.status = "open";
-    invoice.updatedAt = new Date().toISOString();
-    state.invoices.push(invoice);
-    return invoice;
+    return createCycleInvoiceForTenant(tenantId, {
+      invoiceType: "security",
+      isEligible: (tenant) => tenant?.active !== false && toNumber(tenant.securityDeposit) > 0,
+      invalidMessage: "Choose an active tenant with a security deposit before creating this invoice.",
+      findExisting: currentSecurityDepositInvoiceForTenant,
+      duplicateMessage: "Security deposit invoice already exists.",
+      billingPeriod: (summary) => summary.period,
+      lineItems: securityDepositLineItems,
+      notes: () => (normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : ""),
+    });
   }
 
   function createUtilityInvoiceForTenant(tenantId, baseCalculation = cycleUtilityCalculation) {
+    return createCycleInvoiceForTenant(tenantId, {
+      invoiceType: "utility",
+      isEligible: isUtilityBillableTenant,
+      invalidMessage: "Choose a utility-billable tenant before creating a utility invoice.",
+      findExisting: currentUtilityInvoiceForTenant,
+      duplicateMessage: "Utility invoice already exists.",
+      billingPeriod: (summary) => summary.utilityPeriod,
+      notes: () => (normalizeInvoiceType(draft.invoiceType) === "utility" ? draft.notes || "" : ""),
+      prepare(invoice, tenant) {
+        const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
+        const tenantDetails = utilityCalculationDetails(tenantCalculation);
+        if (!tenantDetails.hasTotal || tenantDetails.share <= 0) {
+          showToast("Enter utility bills and allocation units first.");
+          return false;
+        }
+        invoice.utilityCalculation = tenantCalculation;
+        invoice.lineItems = [
+          {
+            type: "Utility",
+            description: utilityLineDescription(tenantCalculation),
+            amount: tenantDetails.share,
+            generatedUtility: true,
+          },
+        ];
+        return true;
+      },
+    });
+  }
+
+  function createCycleInvoiceForTenant(tenantId, options) {
     const summary = currentCycleSummary();
     const tenant = getTenant(tenantId);
-    if (!tenant || !isUtilityBillableTenant(tenant)) {
-      showToast("Choose a utility-billable tenant before creating a utility invoice.");
+    if (!tenant || !options.isEligible(tenant)) {
+      showToast(options.invalidMessage);
       return null;
     }
-    const existing = currentUtilityInvoiceForTenant(tenant.id, summary);
+    const existing = options.findExisting(tenant.id, summary);
     if (existing) {
-      openInvoiceById(existing.id, { message: "Utility invoice already exists." });
+      openInvoiceById(existing.id, { message: options.duplicateMessage });
       return null;
     }
 
-    const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
-    const tenantDetails = utilityCalculationDetails(tenantCalculation);
-    if (!tenantDetails.hasTotal || tenantDetails.share <= 0) {
-      showToast("Enter utility bills and allocation units first.");
-      return null;
-    }
-
-    const invoice = createBlankInvoice(tenant.id, "utility");
+    const invoice = createBlankInvoice(tenant.id, options.invoiceType);
     invoice.id = cryptoId();
     invoice.dueDate = summary.dueDate;
-    invoice.billingPeriod = summary.utilityPeriod;
-    invoice.utilityCalculation = tenantCalculation;
-    invoice.notes = normalizeInvoiceType(draft.invoiceType) === "utility" ? draft.notes || "" : "";
+    invoice.billingPeriod = options.billingPeriod(summary);
+    invoice.notes = options.notes?.(tenant, summary) || "";
     invoice.paymentInstructions = state.landlord.paymentInstructions;
-    invoice.lineItems = [
-      {
-        type: "Utility",
-        description: utilityLineDescription(tenantCalculation),
-        amount: tenantDetails.share,
-        generatedUtility: true,
-      },
-    ];
+    invoice.lineItems = options.lineItems?.(tenant, summary) || invoice.lineItems;
     invoice.status = "open";
     invoice.updatedAt = new Date().toISOString();
+
+    if (options.prepare && !options.prepare(invoice, tenant, summary)) return null;
+
     state.invoices.push(invoice);
     return invoice;
   }
@@ -1515,9 +1483,8 @@
     els.metricPaid.textContent = String(paidInvoices.length);
   }
 
-  function renderOverview() {
+  function renderOverview(summary = currentCycleSummary()) {
     if (!els.overviewCycleLabel) return;
-    const summary = currentCycleSummary();
     els.overviewCycleLabel.textContent = `Rent: ${summary.period} | Utilities: ${summary.utilityPeriod} | Due ${formatDate(summary.dueDate)}`;
     els.overviewCycleStatus.textContent = summary.openInvoices ? `${summary.openInvoices} open` : "Clear";
     els.cycleExpectedRent.textContent = formatMoney(summary.expectedRent);
@@ -1649,27 +1616,37 @@
 
   function overviewInvoiceList(invoices) {
     if (!invoices.length) return `<div class="empty-state">No invoices saved for this billing period yet.</div>`;
-    return [...invoices]
-      .sort((a, b) => `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`))
-      .map((invoice) => {
-        const tenant = getTenant(invoice.tenantId);
-        return `
-          <article class="invoice-card">
-            <div>
-              <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
-              <p>${escapeHtml(invoiceTypeLabel(invoice.invoiceType))} &middot; ${formatMoney(calculateTotal(invoice))} &middot; ${
-                escapeHtml(invoiceStatusText(invoice))
-              }</p>
-            </div>
-            <div class="card-actions">
-              <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
-              <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
-                isInvoicePaid(invoice) ? "false" : "true"
-              }" type="button">${isInvoicePaid(invoice) ? "Reopen" : "Mark paid"}</button>
-            </div>
-          </article>`;
-      })
-      .join("");
+    return sortInvoicesByNewest(invoices).map((invoice) => renderInvoiceCard(invoice)).join("");
+  }
+
+  function sortInvoicesByNewest(invoices) {
+    return [...invoices].sort((a, b) => {
+      return `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`);
+    });
+  }
+
+  function renderInvoiceCard(invoice, options = {}) {
+    const { showBillingPeriod = false, allowDelete = false } = options;
+    const tenant = getTenant(invoice.tenantId);
+    const paid = isInvoicePaid(invoice);
+    const detailParts = [invoiceTypeLabel(invoice.invoiceType)];
+    if (showBillingPeriod) detailParts.push(invoice.billingPeriod || "");
+    detailParts.push(formatMoney(calculateTotal(invoice)), invoiceStatusText(invoice));
+
+    return `
+      <article class="invoice-card">
+        <div>
+          <h3>${escapeHtml(invoice.invoiceNumber)} &middot; ${escapeHtml(tenant?.name || "Tenant")}</h3>
+          <p>${detailParts.map(escapeHtml).join(" &middot; ")}</p>
+        </div>
+        <div class="card-actions">
+          <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+          <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
+            paid ? "false" : "true"
+          }" type="button">${paid ? "Reopen" : "Mark paid"}</button>
+          ${allowDelete ? `<button class="small-button danger" data-delete-invoice="${escapeAttr(invoice.id)}" type="button">Delete</button>` : ""}
+        </div>
+      </article>`;
   }
 
   async function saveInvoice(event) {
@@ -2560,38 +2537,10 @@
     }
   }
 
-  async function saveInvoiceArtifactsToDrive(invoice) {
+  async function saveInvoiceArtifactsToDrive(invoices, actionLabel = "saving invoice") {
+    const invoiceList = Array.isArray(invoices) ? invoices : [invoices].filter(Boolean);
     saveDriveSettings(false);
-    if (!appSettings.googleClientId) {
-      renderDriveStatus("Setup needed: add the Drive client ID in Advanced Drive setup.");
-      return false;
-    }
-    if (!isValidGoogleClientId(appSettings.googleClientId)) {
-      renderDriveStatus("Setup needed: Drive client ID is invalid.");
-      return false;
-    }
-
-    try {
-      if (!(await ensureDriveAccess("saving invoice"))) return false;
-      renderDriveStatus("Uploading app data and invoice PDF to Drive...");
-      await uploadDriveState();
-      const pdfBlob = createInvoicePdfBlob(invoice);
-      const file = await uploadInvoicePdf(invoice, pdfBlob);
-      markInvoiceDriveSaved(invoice.id, file, { write: false });
-      writeLocalState("Saved invoice to Drive");
-      await uploadDriveState();
-      renderDriveStatus(`Saved to Drive: ${file.name || "invoice PDF"}.`);
-      return true;
-    } catch (error) {
-      console.error(error);
-      renderDriveStatus("Drive upload failed. Local invoice stayed saved.");
-      return false;
-    }
-  }
-
-  async function saveBatchInvoiceArtifactsToDrive(invoices, actionLabel = "saving invoices") {
-    saveDriveSettings(false);
-    if (!invoices.length) return false;
+    if (!invoiceList.length) return false;
     if (!appSettings.googleClientId) {
       renderDriveStatus("Setup needed: add the Drive client ID in Advanced Drive setup.");
       return false;
@@ -2603,19 +2552,28 @@
 
     try {
       if (!(await ensureDriveAccess(actionLabel))) return false;
-      renderDriveStatus("Uploading app data and invoice PDFs to Drive...");
+      const plural = invoiceList.length === 1 ? "" : "s";
+      renderDriveStatus(`Uploading app data and invoice PDF${plural} to Drive...`);
       await uploadDriveState();
-      for (const invoice of invoices) {
+      for (const invoice of invoiceList) {
         const file = await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
         markInvoiceDriveSaved(invoice.id, file, { write: false });
       }
-      writeLocalState("Saved invoices to Drive");
+      writeLocalState(invoiceList.length === 1 ? "Saved invoice to Drive" : "Saved invoices to Drive");
       await uploadDriveState();
-      renderDriveStatus(`Saved ${invoices.length} invoice PDF${invoices.length === 1 ? "" : "s"} to Drive.`);
+      renderDriveStatus(
+        invoiceList.length === 1
+          ? `Saved to Drive: ${invoiceList[0].drivePdfFileName || "invoice PDF"}.`
+          : `Saved ${invoiceList.length} invoice PDFs to Drive.`
+      );
       return true;
     } catch (error) {
       console.error(error);
-      renderDriveStatus("Drive upload failed. Local invoices stayed saved.");
+      renderDriveStatus(
+        invoiceList.length === 1
+          ? "Drive upload failed. Local invoice stayed saved."
+          : "Drive upload failed. Local invoices stayed saved."
+      );
       return false;
     }
   }
