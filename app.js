@@ -2,8 +2,8 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v29";
-  const APP_COMMIT_DATE = "July 1, 2026";
+  const APP_VERSION = "rent-ledger-v30";
+  const APP_COMMIT_DATE = "July 2, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
