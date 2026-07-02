@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v31";
+  const APP_VERSION = "rent-ledger-v32";
   const APP_COMMIT_DATE = "July 2, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -245,9 +245,10 @@
         keepCurrentItems: true,
         currentUtilityCalculation,
       });
-      renderInvoiceEditor();
+      const summary = currentCycleSummary();
+      renderInvoiceEditor(summary);
       renderInvoicePreview();
-      renderOverview();
+      renderOverview(summary);
       markDirty();
     });
 
@@ -277,11 +278,12 @@
     els.applyUtilityCharge.addEventListener("click", () => {
       syncDraftFromForm();
       applyUtilityCharge();
+      const summary = currentCycleSummary();
       renderLineItems();
-      renderUtilityCalculation();
+      renderUtilityCalculation(summary);
       renderInvoicePreview();
       renderTotals();
-      renderOverview();
+      renderOverview(summary);
       markDirty();
     });
     if (els.batchUtilityInvoices) els.batchUtilityInvoices.addEventListener("click", batchCreateUtilityInvoices);
@@ -316,20 +318,22 @@
     els.applyRentCharge.addEventListener("click", () => {
       syncDraftFromForm();
       applyRentCharge();
+      const summary = currentCycleSummary();
       renderLineItems();
       renderInvoicePreview();
       renderTotals();
-      renderOverview();
+      renderOverview(summary);
       markDirty();
     });
 
     els.addLineItem.addEventListener("click", () => {
       syncDraftFromForm();
       draft.lineItems.push(defaultManualLineItem(draft.invoiceType));
+      const summary = currentCycleSummary();
       renderLineItems();
       renderInvoicePreview();
       renderTotals();
-      renderOverview();
+      renderOverview(summary);
       markDirty();
     });
 
@@ -386,8 +390,7 @@
 
   function renderAll() {
     cancelScheduledDraftRender();
-    const summary = currentCycleSummary();
-    renderTenantOptions();
+    const { summary } = createRenderContext();
     renderInvoiceEditor(summary);
     renderInvoicePreview();
     renderInvoiceHistory();
@@ -396,6 +399,10 @@
     renderTenants();
     renderMetrics();
     renderBackupStatus();
+  }
+
+  function createRenderContext(summary = currentCycleSummary()) {
+    return { summary };
   }
 
   function scheduleDraftRender(options = {}) {
@@ -449,11 +456,12 @@
       view.classList.toggle("is-active", view.id === activeViewId);
     });
     if (options.replaceHash !== false) window.location.hash = nextView;
+    const summary = workflowType || nextView === "overview" ? currentCycleSummary() : null;
     if (workflowType) {
-      renderWorkflowPanels();
+      renderWorkflowPanels(summary);
       setPreviewVisible(false);
     }
-    if (nextView === "overview") renderOverview();
+    if (nextView === "overview") renderOverview(summary);
     window.scrollTo({ top: 0, behavior: options.instant ? "auto" : "smooth" });
   }
 
@@ -858,7 +866,9 @@
     );
     if (!confirmed) return;
 
-    const createdInvoices = tenants.map((tenant) => createUtilityInvoiceForTenant(tenant.id, baseCalculation)).filter(Boolean);
+    const createdInvoices = tenants
+      .map((tenant) => createUtilityInvoiceForTenant(tenant.id, baseCalculation, summary))
+      .filter(Boolean);
 
     if (!createdInvoices.length) {
       showToast("No utility invoices were created. Check each tenant's utility units.");
@@ -1078,7 +1088,7 @@
       summary.missingRent.length === 1 ? "" : "s"
     } still need rent invoices due ${formatDate(summary.dueDate)}.`;
     els.createAllRentInvoices.disabled = summary.missingRent.length === 0;
-    const tenants = getActiveTenants();
+    const tenants = summary.activeTenants;
     els.rentBatchList.innerHTML = tenants.length
       ? tenants.map((tenant) => renderRentCycleRow(tenant, summary)).join("")
       : `<div class="empty-state">No active tenants are available for rent billing.</div>`;
@@ -1106,7 +1116,7 @@
       summary.missingSecurityDeposits.length === 1 ? "" : "s"
     } with security deposits still need invoices due ${formatDate(summary.dueDate)}.`;
     els.createAllSecurityDepositInvoices.disabled = summary.missingSecurityDeposits.length === 0;
-    const tenants = getSecurityDepositTenants();
+    const tenants = summary.securityDepositTenants;
     els.securityDepositBatchList.innerHTML = tenants.length
       ? tenants.map((tenant) => renderSecurityDepositCycleRow(tenant, summary)).join("")
       : `<div class="empty-state">No active tenants have a security deposit amount.</div>`;
@@ -1141,7 +1151,7 @@
   }
 
   function renderUtilityAllocationList(summary = currentCycleSummary()) {
-    const tenants = getUtilityBillableTenants();
+    const tenants = summary.utilityBillableTenants;
     if (!tenants.length) {
       els.utilityAllocationList.innerHTML = `<div class="empty-state">No active tenants are billable for utilities.</div>`;
       return;
@@ -1211,16 +1221,23 @@
   }
 
   function currentRentInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
-    return summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesRent(invoice));
+    return (
+      summary.rentInvoiceByTenantId?.get(tenantId) ||
+      summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesRent(invoice))
+    );
   }
 
   function currentUtilityInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
-    return summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesUtility(invoice));
+    return (
+      summary.utilityInvoiceByTenantId?.get(tenantId) ||
+      summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesUtility(invoice))
+    );
   }
 
   function currentSecurityDepositInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
-    return summary.cycleInvoices.find(
-      (invoice) => invoice.tenantId === tenantId && invoiceIncludesSecurityDeposit(invoice)
+    return (
+      summary.securityDepositInvoiceByTenantId?.get(tenantId) ||
+      summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesSecurityDeposit(invoice))
     );
   }
 
@@ -1321,7 +1338,7 @@
     );
     if (!confirmed) return;
 
-    const createdInvoices = tenants.map((tenant) => createRentInvoiceForTenant(tenant.id)).filter(Boolean);
+    const createdInvoices = tenants.map((tenant) => createRentInvoiceForTenant(tenant.id, summary)).filter(Boolean);
     if (!createdInvoices.length) {
       showToast("No rent invoices were created.");
       return;
@@ -1356,17 +1373,21 @@
     currentWorkflow = workflow;
   }
 
-  function createRentInvoiceForTenant(tenantId) {
-    return createCycleInvoiceForTenant(tenantId, {
-      invoiceType: "rent",
-      isEligible: (tenant) => tenant?.active !== false,
-      invalidMessage: "Choose an active tenant before creating a rent invoice.",
-      findExisting: currentRentInvoiceForTenant,
-      duplicateMessage: "Rent invoice already exists.",
-      billingPeriod: (summary) => summary.period,
-      lineItems: rentLineItems,
-      notes: () => (normalizeInvoiceType(draft.invoiceType) === "rent" ? draft.notes || "" : ""),
-    });
+  function createRentInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
+    return createCycleInvoiceForTenant(
+      tenantId,
+      {
+        invoiceType: "rent",
+        isEligible: (tenant) => tenant?.active !== false,
+        invalidMessage: "Choose an active tenant before creating a rent invoice.",
+        findExisting: currentRentInvoiceForTenant,
+        duplicateMessage: "Rent invoice already exists.",
+        billingPeriod: (cycleSummary) => cycleSummary.period,
+        lineItems: rentLineItems,
+        notes: () => (normalizeInvoiceType(draft.invoiceType) === "rent" ? draft.notes || "" : ""),
+      },
+      summary
+    );
   }
 
   async function createAllSecurityDepositInvoices() {
@@ -1382,7 +1403,9 @@
     );
     if (!confirmed) return;
 
-    const createdInvoices = tenants.map((tenant) => createSecurityDepositInvoiceForTenant(tenant.id)).filter(Boolean);
+    const createdInvoices = tenants
+      .map((tenant) => createSecurityDepositInvoiceForTenant(tenant.id, summary))
+      .filter(Boolean);
     if (!createdInvoices.length) {
       showToast("No security deposit invoices were created.");
       return;
@@ -1397,51 +1420,62 @@
     });
   }
 
-  function createSecurityDepositInvoiceForTenant(tenantId) {
-    return createCycleInvoiceForTenant(tenantId, {
-      invoiceType: "security",
-      isEligible: (tenant) => tenant?.active !== false && toNumber(tenant.securityDeposit) > 0,
-      invalidMessage: "Choose an active tenant with a security deposit before creating this invoice.",
-      findExisting: currentSecurityDepositInvoiceForTenant,
-      duplicateMessage: "Security deposit invoice already exists.",
-      billingPeriod: (summary) => summary.period,
-      lineItems: securityDepositLineItems,
-      notes: () => (normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : ""),
-    });
-  }
-
-  function createUtilityInvoiceForTenant(tenantId, baseCalculation = cycleUtilityCalculation) {
-    return createCycleInvoiceForTenant(tenantId, {
-      invoiceType: "utility",
-      isEligible: isUtilityBillableTenant,
-      invalidMessage: "Choose a utility-billable tenant before creating a utility invoice.",
-      findExisting: currentUtilityInvoiceForTenant,
-      duplicateMessage: "Utility invoice already exists.",
-      billingPeriod: (summary) => summary.utilityPeriod,
-      notes: () => (normalizeInvoiceType(draft.invoiceType) === "utility" ? draft.notes || "" : ""),
-      prepare(invoice, tenant) {
-        const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
-        const tenantDetails = utilityCalculationDetails(tenantCalculation);
-        if (!tenantDetails.hasTotal || tenantDetails.share <= 0) {
-          showToast("Enter utility bills and allocation units first.");
-          return false;
-        }
-        invoice.utilityCalculation = tenantCalculation;
-        invoice.lineItems = [
-          {
-            type: "Utility",
-            description: utilityLineDescription(tenantCalculation),
-            amount: tenantDetails.share,
-            generatedUtility: true,
-          },
-        ];
-        return true;
+  function createSecurityDepositInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
+    return createCycleInvoiceForTenant(
+      tenantId,
+      {
+        invoiceType: "security",
+        isEligible: (tenant) => tenant?.active !== false && toNumber(tenant.securityDeposit) > 0,
+        invalidMessage: "Choose an active tenant with a security deposit before creating this invoice.",
+        findExisting: currentSecurityDepositInvoiceForTenant,
+        duplicateMessage: "Security deposit invoice already exists.",
+        billingPeriod: (cycleSummary) => cycleSummary.period,
+        lineItems: securityDepositLineItems,
+        notes: () => (normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : ""),
       },
-    });
+      summary
+    );
   }
 
-  function createCycleInvoiceForTenant(tenantId, options) {
-    const summary = currentCycleSummary();
+  function createUtilityInvoiceForTenant(
+    tenantId,
+    baseCalculation = cycleUtilityCalculation,
+    summary = currentCycleSummary()
+  ) {
+    return createCycleInvoiceForTenant(
+      tenantId,
+      {
+        invoiceType: "utility",
+        isEligible: isUtilityBillableTenant,
+        invalidMessage: "Choose a utility-billable tenant before creating a utility invoice.",
+        findExisting: currentUtilityInvoiceForTenant,
+        duplicateMessage: "Utility invoice already exists.",
+        billingPeriod: (cycleSummary) => cycleSummary.utilityPeriod,
+        notes: () => (normalizeInvoiceType(draft.invoiceType) === "utility" ? draft.notes || "" : ""),
+        prepare(invoice, tenant) {
+          const tenantCalculation = utilityCalculationForTenant(tenant, baseCalculation);
+          const tenantDetails = utilityCalculationDetails(tenantCalculation);
+          if (!tenantDetails.hasTotal || tenantDetails.share <= 0) {
+            showToast("Enter utility bills and allocation units first.");
+            return false;
+          }
+          invoice.utilityCalculation = tenantCalculation;
+          invoice.lineItems = [
+            {
+              type: "Utility",
+              description: utilityLineDescription(tenantCalculation),
+              amount: tenantDetails.share,
+              generatedUtility: true,
+            },
+          ];
+          return true;
+        },
+      },
+      summary
+    );
+  }
+
+  function createCycleInvoiceForTenant(tenantId, options, summary = currentCycleSummary()) {
     const tenant = getTenant(tenantId);
     if (!tenant || !options.isEligible(tenant)) {
       showToast(options.invalidMessage);
@@ -1531,28 +1565,54 @@
     const utilityBillableTenants = getUtilityBillableTenants();
     const securityDepositTenants = getSecurityDepositTenants();
     const cycleInvoices = state.invoices.filter((invoice) => isCurrentCycleInvoice(invoice, period, utilityPeriod));
-    const missingRent = activeTenants.filter((tenant) => {
-      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesRent(invoice));
+    const rentInvoiceByTenantId = new Map();
+    const utilityInvoiceByTenantId = new Map();
+    const securityDepositInvoiceByTenantId = new Map();
+    const openCycleInvoices = [];
+    let rentInvoiced = 0;
+    let utilityInvoiced = 0;
+    let openBalance = 0;
+
+    cycleInvoices.forEach((invoice) => {
+      if (invoiceIncludesRent(invoice) && !rentInvoiceByTenantId.has(invoice.tenantId)) {
+        rentInvoiceByTenantId.set(invoice.tenantId, invoice);
+      }
+      if (invoiceIncludesUtility(invoice) && !utilityInvoiceByTenantId.has(invoice.tenantId)) {
+        utilityInvoiceByTenantId.set(invoice.tenantId, invoice);
+      }
+      if (invoiceIncludesSecurityDeposit(invoice) && !securityDepositInvoiceByTenantId.has(invoice.tenantId)) {
+        securityDepositInvoiceByTenantId.set(invoice.tenantId, invoice);
+      }
+      rentInvoiced += invoiceCategoryTotal(invoice, "rent");
+      utilityInvoiced += invoiceCategoryTotal(invoice, "utility");
+      if (invoice.status !== "paid") {
+        openCycleInvoices.push(invoice);
+        openBalance += calculateTotal(invoice);
+      }
     });
-    const missingUtilities = utilityBillableTenants.filter((tenant) => {
-      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesUtility(invoice));
-    });
-    const missingSecurityDeposits = securityDepositTenants.filter((tenant) => {
-      return !cycleInvoices.some((invoice) => invoice.tenantId === tenant.id && invoiceIncludesSecurityDeposit(invoice));
-    });
+
+    const missingRent = activeTenants.filter((tenant) => !rentInvoiceByTenantId.has(tenant.id));
+    const missingUtilities = utilityBillableTenants.filter((tenant) => !utilityInvoiceByTenantId.has(tenant.id));
+    const missingSecurityDeposits = securityDepositTenants.filter(
+      (tenant) => !securityDepositInvoiceByTenantId.has(tenant.id)
+    );
 
     return {
       period,
       utilityPeriod,
       dueDate,
+      activeTenants,
+      utilityBillableTenants,
+      securityDepositTenants,
       cycleInvoices,
+      rentInvoiceByTenantId,
+      utilityInvoiceByTenantId,
+      securityDepositInvoiceByTenantId,
       expectedRent: activeTenants.reduce((total, tenant) => total + toNumber(tenant.rent), 0),
-      rentInvoiced: cycleInvoices.reduce((total, invoice) => total + invoiceCategoryTotal(invoice, "rent"), 0),
-      utilityInvoiced: cycleInvoices.reduce((total, invoice) => total + invoiceCategoryTotal(invoice, "utility"), 0),
-      openBalance: cycleInvoices
-        .filter((invoice) => invoice.status !== "paid")
-        .reduce((total, invoice) => total + calculateTotal(invoice), 0),
-      openInvoices: cycleInvoices.filter((invoice) => invoice.status !== "paid").length,
+      rentInvoiced,
+      utilityInvoiced,
+      openBalance,
+      openInvoices: openCycleInvoices.length,
       missingRent,
       missingUtilities,
       missingSecurityDeposits,
@@ -2873,7 +2933,8 @@
     const subtotal = sumLineItems(invoice.lineItems);
     const paymentTotal = invoicePaymentTotal(invoice);
     const totalDue = calculateTotal(invoice);
-    const commands = [];
+    const doc = createPdfDocument(invoiceTypeLabel(invoiceType), invoice.invoiceNumber || "");
+    const commands = doc.commands;
 
     pdfText(commands, 36, 748, landlord.name || "Landlord", 14, "F2");
     let headerY = 730;
@@ -2902,33 +2963,28 @@
     factY = pdfFact(commands, 350, factY, "Invoice type", invoiceTypeLabel(invoiceType));
     pdfFact(commands, 350, factY, "Status", invoiceStatusText(invoice));
 
-    let tableY = 560;
-    pdfText(commands, 36, tableY, "TYPE", 7.5, "F2", [0.38, 0.44, 0.42]);
-    pdfText(commands, 130, tableY, "DESCRIPTION", 7.5, "F2", [0.38, 0.44, 0.42]);
-    pdfTextRight(commands, 576, tableY, "AMOUNT", 7.5, "F2", [0.38, 0.44, 0.42]);
-    pdfLine(commands, 36, tableY - 9, 576, tableY - 9, 0.7, [0.82, 0.84, 0.82]);
-    tableY -= 28;
+    doc.y = drawPdfLineItemHeader(commands, 560);
 
-    (invoice.lineItems || []).forEach((item) => {
-      pdfText(commands, 36, tableY, item.type || "", 9);
-      const wrapped = pdfWrapLines(item.description || "", 310, 9, 2);
-      wrapped.forEach((line, index) => pdfText(commands, 130, tableY - index * 11, line, 9));
-      pdfTextRight(commands, 576, tableY, formatMoney(item.amount), 9);
-      tableY -= Math.max(22, wrapped.length * 11 + 10);
-      pdfLine(commands, 36, tableY + 9, 576, tableY + 9, 0.5, [0.86, 0.88, 0.86]);
-    });
+    (invoice.lineItems || []).forEach((item) => renderPdfLineItem(doc, item));
 
-    let summaryY = tableY - 12;
-    summaryY = pdfSummary(commands, 390, summaryY, "Subtotal", formatMoney(subtotal), false);
-    summaryY = pdfSummary(commands, 390, summaryY, "Previous balance", formatMoney(invoice.previousBalance), false);
-    summaryY = pdfSummary(commands, 390, summaryY, "Credits / adjustments", formatMoney(-Number(invoice.credits || 0)), false);
+    ensurePdfSpace(doc, 104);
+    let summaryY = doc.y - 12;
+    summaryY = pdfSummary(doc.commands, 390, summaryY, "Subtotal", formatMoney(subtotal), false);
+    summaryY = pdfSummary(doc.commands, 390, summaryY, "Previous balance", formatMoney(invoice.previousBalance), false);
+    summaryY = pdfSummary(
+      doc.commands,
+      390,
+      summaryY,
+      "Credits / adjustments",
+      formatMoney(-Number(invoice.credits || 0)),
+      false
+    );
     if (paymentTotal) {
-      summaryY = pdfSummary(commands, 390, summaryY, "Payments received", formatMoney(-paymentTotal), false);
+      summaryY = pdfSummary(doc.commands, 390, summaryY, "Payments received", formatMoney(-paymentTotal), false);
     }
-    pdfLine(commands, 390, summaryY + 4, 576, summaryY + 4, 1.2, [0.12, 0.2, 0.18]);
-    pdfSummary(commands, 390, summaryY - 18, "Balance due", formatMoney(totalDue), true);
+    pdfLine(doc.commands, 390, summaryY + 4, 576, summaryY + 4, 1.2, [0.12, 0.2, 0.18]);
+    doc.y = pdfSummary(doc.commands, 390, summaryY - 18, "Balance due", formatMoney(totalDue), true) - 12;
 
-    const notesY = 222;
     const footerBlocks = [];
     if (invoiceAllowsUtility(invoiceType) && utilityDetails.hasTotal) {
       footerBlocks.push({
@@ -2940,15 +2996,9 @@
     if (paymentInstructions) footerBlocks.push({ title: "PAYMENT", body: paymentInstructions });
     if (invoice.notes) footerBlocks.push({ title: "NOTES", body: invoice.notes });
 
-    if (footerBlocks.length) {
-      pdfLine(commands, 36, notesY + 18, 576, notesY + 18, 0.7, [0.82, 0.84, 0.82]);
-      const columns = pdfFooterColumns(footerBlocks.length);
-      footerBlocks.forEach((block, index) => {
-        pdfFooterBlock(commands, columns[index].x, notesY, columns[index].width, block.title, block.body);
-      });
-    }
+    renderPdfFooterBlocks(doc, footerBlocks);
 
-    return new Blob([assemblePdf(commands)], { type: "application/pdf" });
+    return new Blob([assemblePdf(doc.pages)], { type: "application/pdf" });
   }
 
   function invoicePdfFileName(invoice, tenant) {
@@ -2957,18 +3007,85 @@
     return `${number}-${tenantName}.pdf`;
   }
 
-  function pdfFooterColumns(count) {
-    if (count === 1) return [{ x: 36, width: 260 }];
-    if (count === 2)
-      return [
-        { x: 36, width: 240 },
-        { x: 336, width: 240 },
-      ];
-    return [
-      { x: 36, width: 160 },
-      { x: 230, width: 160 },
-      { x: 424, width: 152 },
-    ];
+  function createPdfDocument(title, invoiceNumber) {
+    const firstPage = [];
+    return {
+      title,
+      invoiceNumber,
+      pages: [firstPage],
+      commands: firstPage,
+      pageNumber: 1,
+      y: 0,
+    };
+  }
+
+  function addPdfPage(doc, sectionTitle = "Invoice continued") {
+    const commands = [];
+    doc.pages.push(commands);
+    doc.commands = commands;
+    doc.pageNumber += 1;
+    pdfText(commands, 36, 748, doc.title || "Invoice", 12, "F2");
+    pdfTextRight(
+      commands,
+      576,
+      748,
+      `${doc.invoiceNumber || "Invoice"} | Page ${doc.pageNumber}`,
+      9,
+      "F1",
+      [0.31, 0.36, 0.35]
+    );
+    pdfText(commands, 36, 724, sectionTitle, 8, "F2", [0.75, 0.39, 0.21]);
+    pdfLine(commands, 36, 710, 576, 710, 0.7, [0.82, 0.84, 0.82]);
+    doc.y = 688;
+    return doc.y;
+  }
+
+  function ensurePdfSpace(doc, requiredHeight, options = {}) {
+    const bottom = 72;
+    if (doc.y && doc.y - requiredHeight >= bottom) return;
+    addPdfPage(doc, options.sectionTitle);
+    if (options.tableHeader) doc.y = drawPdfLineItemHeader(doc.commands, doc.y);
+  }
+
+  function drawPdfLineItemHeader(commands, y) {
+    pdfText(commands, 36, y, "TYPE", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfText(commands, 130, y, "DESCRIPTION", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfTextRight(commands, 576, y, "AMOUNT", 7.5, "F2", [0.38, 0.44, 0.42]);
+    pdfLine(commands, 36, y - 9, 576, y - 9, 0.7, [0.82, 0.84, 0.82]);
+    return y - 28;
+  }
+
+  function renderPdfLineItem(doc, item) {
+    const wrapped = pdfWrapLines(item.description || "", 310, 9, 10);
+    const rowHeight = Math.max(22, wrapped.length * 11 + 10);
+    ensurePdfSpace(doc, rowHeight, { tableHeader: true, sectionTitle: "Line items continued" });
+    const y = doc.y;
+    pdfText(doc.commands, 36, y, item.type || "", 9);
+    wrapped.forEach((line, index) => pdfText(doc.commands, 130, y - index * 11, line, 9));
+    pdfTextRight(doc.commands, 576, y, formatMoney(item.amount), 9);
+    doc.y -= rowHeight;
+    pdfLine(doc.commands, 36, doc.y + 9, 576, doc.y + 9, 0.5, [0.86, 0.88, 0.86]);
+  }
+
+  function renderPdfFooterBlocks(doc, footerBlocks) {
+    if (!footerBlocks.length) return;
+    ensurePdfSpace(doc, 24, { sectionTitle: "Invoice notes" });
+    pdfLine(doc.commands, 36, doc.y, 576, doc.y, 0.7, [0.82, 0.84, 0.82]);
+    doc.y -= 20;
+    footerBlocks.forEach((block) => renderPdfFooterBlock(doc, block));
+  }
+
+  function renderPdfFooterBlock(doc, block) {
+    const lines = pdfWrapLines(block.body || "", 500, 8.5);
+    ensurePdfSpace(doc, 28, { sectionTitle: block.title });
+    pdfText(doc.commands, 36, doc.y, block.title, 7.5, "F2", [0.75, 0.39, 0.21]);
+    doc.y -= 17;
+    lines.forEach((line) => {
+      ensurePdfSpace(doc, 13, { sectionTitle: `${block.title} continued` });
+      pdfText(doc.commands, 36, doc.y, line, 8.5, "F1");
+      doc.y -= 11;
+    });
+    doc.y -= 10;
   }
 
   function sanitizeFileName(value) {
@@ -2978,11 +3095,6 @@
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-");
     return clean || "invoice";
-  }
-
-  function pdfFooterBlock(commands, x, y, width, title, body) {
-    pdfText(commands, x, y, title, 7.5, "F2", [0.75, 0.39, 0.21]);
-    pdfWrappedText(commands, body, x, y - 17, width, 8.5, "F1", 11, 7);
   }
 
   function pdfFact(commands, x, y, label, value) {
@@ -3083,15 +3195,30 @@
       .trim();
   }
 
-  function assemblePdf(commands) {
-    const content = `${commands.join("\n")}\n`;
+  function assemblePdf(pages) {
+    const pageCommands = Array.isArray(pages?.[0]) ? pages : [pages || []];
+    const pageCount = pageCommands.length;
+    const pageObjectStart = 3;
+    const font1Object = pageObjectStart + pageCount;
+    const font2Object = font1Object + 1;
+    const contentObjectStart = font2Object + 1;
+    const pageKids = pageCommands.map((_, index) => `${pageObjectStart + index} 0 R`).join(" ");
+    const pageObjects = pageCommands.map((_, index) => {
+      return `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${font1Object} 0 R /F2 ${font2Object} 0 R >> >> /Contents ${
+        contentObjectStart + index
+      } 0 R >>`;
+    });
+    const contentObjects = pageCommands.map((commands) => {
+      const content = `${commands.join("\n")}\n`;
+      return `<< /Length ${content.length} >>\nstream\n${content}endstream`;
+    });
     const objects = [
       "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+      `<< /Type /Pages /Kids [${pageKids}] /Count ${pageCount} >>`,
+      ...pageObjects,
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-      `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+      ...contentObjects,
     ];
 
     let pdf = "%PDF-1.4\n% Rent Ledger\n";
@@ -3625,5 +3752,12 @@
 
   function escapeAttr(value) {
     return escapeHtml(value).replace(/`/g, "&#096;");
+  }
+
+  if (window.__RENT_LEDGER_ENABLE_TEST_HOOKS__) {
+    window.__rentLedgerTest = {
+      createInvoicePdfBlob,
+      currentCycleSummary,
+    };
   }
 })();

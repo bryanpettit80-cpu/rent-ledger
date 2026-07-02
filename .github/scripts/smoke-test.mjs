@@ -57,6 +57,9 @@ try {
   const expectedRentInvoiceNumber = invoiceNumberPattern("RNT", rentCycleDate);
   const expectedUtilityInvoiceNumber = invoiceNumberPattern("UTL", previousMonthDate(rentCycleDate));
   const expectedDepositInvoiceNumber = invoiceNumberPattern("DEP", rentCycleDate);
+  await page.addInitScript(() => {
+    window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ = true;
+  });
   await page.route("**/sw.js", (route) => route.abort());
   await page.goto(baseUrl, { waitUntil: "networkidle" });
 
@@ -148,6 +151,42 @@ try {
     Math.abs(overviewState.settingsWidth + 2 - overviewState.navWidth) <= 1,
     `Expected Settings to fill the bottom nav row, got ${overviewState.settingsWidth} of ${overviewState.navWidth}.`
   );
+
+  const longPdfState = await page.evaluate(async ({ rentPeriod }) => {
+    const lineItems = Array.from({ length: 46 }, (_, index) => ({
+      type: index % 2 ? "Fee" : "Rent",
+      description: `Long invoice line ${index + 1} with enough descriptive text to exercise wrapping and page breaks.`,
+      amount: 25 + index,
+    }));
+    const blob = window.__rentLedgerTest.createInvoicePdfBlob({
+      id: "long-pdf-test",
+      tenantId: "andrew",
+      invoiceType: "rent",
+      invoiceNumber: "RNT-2099-01-9998",
+      issueDate: "2026-07-01",
+      dueDate: "2026-07-01",
+      billingPeriod: rentPeriod,
+      lineItems,
+      previousBalance: 0,
+      credits: 0,
+      payments: [],
+      paymentInstructions: "Pay test.",
+      notes: "Long PDF pagination test note.",
+      status: "open",
+    });
+    const text = await blob.text();
+    const pageCount = (text.match(/\/Type \/Page\b/g) || []).length;
+    return {
+      blobType: blob.type,
+      pageCount,
+      hasMatchingCount: text.includes(`/Count ${pageCount}`),
+      hasXref: text.includes("xref"),
+    };
+  }, { rentPeriod: expectedRentPeriod });
+  assert(longPdfState.blobType === "application/pdf", `Expected PDF blob type, got ${longPdfState.blobType}.`);
+  assert(longPdfState.pageCount >= 2, `Expected long invoice PDF to paginate, got ${longPdfState.pageCount} page.`);
+  assert(longPdfState.hasMatchingCount, "PDF page tree count should match generated pages.");
+  assert(longPdfState.hasXref, "Generated PDF must include a cross-reference table.");
 
   await page.click('[data-view="rent"]');
 

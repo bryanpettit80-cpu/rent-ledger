@@ -281,6 +281,30 @@ assets/
 
 No build step is required for the current app.
 
+## Release Checklist
+
+For browser-visible changes, bump the static app version before pushing:
+
+```text
+node .github/scripts/bump-version.mjs
+```
+
+That helper updates `APP_VERSION`, the splash-screen version, service-worker cache names, and versioned asset URLs together. It can also take an explicit version:
+
+```text
+node .github/scripts/bump-version.mjs rent-ledger-v32 --date "July 2, 2026"
+```
+
+Before merging or pushing a release, run:
+
+```text
+node --check app.js
+node --check sw.js
+node .github/scripts/validate-static.mjs
+```
+
+GitHub CI also installs Playwright and runs `.github/scripts/smoke-test.mjs`, including the browser workflow checks and multi-page invoice PDF coverage.
+
 ## Refreshing The App
 
 The app uses a service worker for offline support. New deployments use versioned assets and a network-first service worker so browsers pick up updates more reliably.

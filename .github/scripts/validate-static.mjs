@@ -5,6 +5,8 @@ const files = {
   html: readFileSync("index.html", "utf8"),
   serviceWorker: readFileSync("sw.js", "utf8"),
   readme: readFileSync("README.md", "utf8"),
+  bumpVersion: readFileSync(".github/scripts/bump-version.mjs", "utf8"),
+  smokeTest: readFileSync(".github/scripts/smoke-test.mjs", "utf8"),
 };
 
 const failures = [];
@@ -19,6 +21,10 @@ assert(appVersionMatch, "app.js must define APP_VERSION.");
 const appVersion = appVersionMatch?.[1] || "";
 assert(/^rent-ledger-v\d+$/.test(appVersion), `APP_VERSION must look like rent-ledger-vNN, got ${appVersion || "missing"}.`);
 
+const appCommitDateMatch = files.app.match(/const APP_COMMIT_DATE = "([^"]+)"/);
+assert(appCommitDateMatch, "app.js must define APP_COMMIT_DATE.");
+const appCommitDate = appCommitDateMatch?.[1] || "";
+
 const versionedFiles = {
   "app.js": files.app,
   "index.html": files.html,
@@ -32,6 +38,10 @@ for (const [name, content] of Object.entries(versionedFiles)) {
 }
 
 assert(files.html.includes(`<strong id="splashVersion">${appVersion}</strong>`), "index.html splash version must match APP_VERSION.");
+assert(
+  files.html.includes(`<strong id="splashCommitDate">${appCommitDate}</strong>`),
+  "index.html splash commit date must match APP_COMMIT_DATE."
+);
 assert(files.html.includes(`app.js?v=${appVersion}`), "index.html script URL must use APP_VERSION.");
 assert(files.html.includes(`styles.css?v=${appVersion}`), "index.html stylesheet URL must use APP_VERSION.");
 assert(files.html.includes(`manifest.webmanifest?v=${appVersion}`), "index.html manifest URL must use APP_VERSION.");
@@ -78,6 +88,18 @@ assert(files.app.includes("Payment cannot exceed the current balance due"), "Ove
 assert(files.app.includes("function markInvoiceDriveSaved"), "app.js must persist invoice Drive PDF metadata.");
 assert(files.app.includes("invoiceSavedToDrive(draft)"), "Saved invoice labels must use persisted Drive metadata.");
 assert(files.app.includes("drivePdfFileId"), "Invoices must store the Drive PDF file id after upload.");
+assert(files.app.includes("function createRenderContext"), "Render flow must keep a shared render context.");
+assert(files.app.includes("rentInvoiceByTenantId = new Map"), "Cycle summary must index rent invoices by tenant.");
+assert(files.app.includes("utilityInvoiceByTenantId = new Map"), "Cycle summary must index utility invoices by tenant.");
+assert(
+  files.app.includes("securityDepositInvoiceByTenantId = new Map"),
+  "Cycle summary must index security deposit invoices by tenant."
+);
+assert(files.app.includes("function ensurePdfSpace"), "PDF generation must guard page space before drawing content.");
+assert(files.app.includes("function addPdfPage"), "PDF generation must support multi-page invoices.");
+assert(files.app.includes("assemblePdf(doc.pages)"), "Invoice PDF creation must pass all generated pages to the assembler.");
+assert(files.app.includes("/Count ${pageCount}"), "PDF page tree count must be generated from the actual page count.");
+assert(files.app.includes("__RENT_LEDGER_ENABLE_TEST_HOOKS__"), "Smoke tests must have gated access to PDF generation hooks.");
 assert(files.app.includes("function setPreviewVisible"), "app.js must define mobile preview visibility handling.");
 assert(files.app.includes("function setInvoicePaid"), "Saved invoices must support mark-paid/reopen actions.");
 assert(files.app.includes('invoice.status = calculateTotal(invoice) <= 0 ? "paid" : "partial";'), "Partial payments must leave invoices in partial status.");
@@ -108,6 +130,9 @@ assert(files.readme.includes("Saved locally"), "README must document the saved-l
 assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
 assert(files.readme.includes("Drive PDF metadata"), "README must explain saved-to-Drive metadata.");
 assert(files.readme.includes("Credits or adjustments reduce the balance"), "README must explain credit and payment balance handling.");
+assert(files.readme.includes("Release Checklist"), "README must include the static release checklist.");
+assert(files.bumpVersion.includes("incrementVersion"), "Version bump helper must increment APP_VERSION.");
+assert(files.smokeTest.includes("long invoice PDF to paginate"), "Smoke test must cover multi-page invoice PDFs.");
 
 if (failures.length) {
   console.error("Static validation failed:");
