@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v32" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v33" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v32" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v33" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,7 +23,7 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v32</strong>
+              <strong id="splashVersion">rent-ledger-v33</strong>
             </div>
             <div>
               <span>Commit date</span>
@@ -113,6 +113,26 @@
               </div>
             </section>
 
+            <section class="panel operations-panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Operations</p>
+                  <h2>Billing Health</h2>
+                </div>
+                <span class="status-pill" id="billingHealthScore">100%</span>
+              </div>
+              <div class="operations-grid">
+                <div>
+                  <h3>Checks</h3>
+                  <div class="operations-list" id="billingHealthList"></div>
+                </div>
+                <div>
+                  <h3>Next actions</h3>
+                  <div class="operations-list" id="billingActionList"></div>
+                </div>
+              </div>
+            </section>
+
             <section class="panel">
               <div class="panel-header compact">
                 <div>
@@ -132,6 +152,25 @@
                 <div>
                   <h3>Missing security deposits</h3>
                   <div class="overview-list" id="cycleMissingSecurityDeposits"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">Collections</p>
+                  <h2>Open Balances</h2>
+                </div>
+              </div>
+              <div class="operations-grid">
+                <div>
+                  <h3>Overdue invoices</h3>
+                  <div class="operations-list" id="delinquencyList"></div>
+                </div>
+                <div>
+                  <h3>Communication drafts</h3>
+                  <div class="operations-list" id="communicationDraftList"></div>
                 </div>
               </div>
             </section>
@@ -527,6 +566,16 @@
             <section class="panel">
               <div class="panel-header compact">
                 <div>
+                  <p class="eyebrow">Audit</p>
+                  <h2>Recent Local Activity</h2>
+                </div>
+              </div>
+              <div class="audit-list" id="auditTrailList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
                   <p class="eyebrow">Totals</p>
                   <h2>Portfolio Snapshot</h2>
                 </div>
@@ -589,6 +638,34 @@
                   </label>
                 </details>
               </div>
+              <div class="backup-tools report-tools">
+                <div>
+                  <p class="eyebrow">Exports</p>
+                  <h2>Reports</h2>
+                  <p class="backup-copy">
+                    Download accounting-ready CSV files from the data currently saved in this browser.
+                  </p>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="exportInvoiceCsv" type="button">Invoice CSV</button>
+                  <button class="secondary-button" id="exportTenantStatementCsv" type="button">Tenant balances CSV</button>
+                  <button class="secondary-button" id="exportAuditCsv" type="button">Audit CSV</button>
+                </div>
+              </div>
+              <div class="backup-tools lock-tools">
+                <div>
+                  <p class="eyebrow">Controls</p>
+                  <h2>Closed Periods</h2>
+                  <p class="backup-copy">
+                    Lock reviewed billing periods so invoice edits, deletes, and payment changes require confirmation.
+                  </p>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="lockCurrentCycle" type="button">Lock current cycle</button>
+                  <button class="secondary-button" id="unlockCurrentCycle" type="button">Unlock current cycle</button>
+                </div>
+                <div class="operations-list closed-period-list" id="closedPeriodList"></div>
+              </div>
             </section>
           </div>
         </section>
@@ -618,6 +695,6 @@
       </div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v32" defer></script>
+    <script src="app.js?v=rent-ledger-v33" defer></script>
   </body>
 </html>

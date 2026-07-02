@@ -14,6 +14,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Stores tenant profiles, landlord contact details, and payment instructions.
 - Calculates utility reimbursements from actual utility bills.
 - Starts on a current-cycle overview that shows what still needs to be billed.
+- Shows an Operations Dashboard with billing health checks, overdue balances, and next actions.
 - Creates all remaining rent invoices for the current cycle from the Rent workflow.
 - Creates all remaining utility invoices for the current cycle from one utility calculation.
 - Creates security deposit invoices for active tenants with saved deposit amounts.
@@ -22,7 +23,11 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Prints invoices to paper or PDF through the browser.
 - Generates invoice PDFs and saves them to Google Drive when Drive is connected.
 - Records full and partial invoice payments from the saved-invoice lists without adding payment fields to the invoice editor.
+- Creates copyable tenant message drafts for open balances.
 - Saves invoice history in the current browser.
+- Keeps a Local Audit Trail of local saves, payments, imports, Drive writes, and period locks.
+- Exports invoice, tenant balance, and audit CSV reports.
+- Locks reviewed billing periods so invoice changes require confirmation.
 - Keeps local browser state and can sync that state to Google Drive.
 - Separates active and inactive tenants.
 - Optionally syncs the app state to Google Drive after Google Drive is connected.
@@ -137,6 +142,38 @@ Use `Mark paid` from a saved invoice card or workflow row to open the payment po
 
 Credits or adjustments reduce the balance before payment recording. If a $200 tenant payment is entered as a credit, do not also record that same $200 through `Mark paid`; the payment popup only accepts amounts up to the remaining balance due.
 
+## Operations Dashboard
+
+The Overview screen includes an operations section for day-to-day review:
+
+- Billing Health checks active tenants, missing emails, zero rent amounts, utility allocation setup, duplicate tenant/type/period invoices, paid invoices with remaining balances, overdue open balances, and whether reviewed periods are locked.
+- Next actions routes directly to Rent, Utilities, Security Deposits, Invoices, or the current-cycle lock action.
+- Open Balances lists overdue invoices with quick access to open the invoice, copy a tenant message, or record payment.
+- Communication drafts generate local message text for open invoices. The app prepares the draft, but it does not send email.
+
+## Closed Periods
+
+Use `Settings` > `Closed Periods` after a billing cycle has been reviewed.
+
+- `Lock current cycle` locks the current rent/security period and the related utility period.
+- Editing, deleting, marking paid, or reopening invoices in a locked period requires confirmation.
+- `Unlock current cycle` removes the confirmation guard for the current rent/security and utility periods.
+- Closed periods are stored in the local app state, included in JSON backups, and included when the state is uploaded to Google Drive.
+
+## CSV Exports
+
+Use `Settings` > `Reports` to download:
+
+- `Invoice CSV` for invoice-level accounting review.
+- `Tenant balances CSV` for open balances by tenant.
+- `Audit CSV` for local activity review.
+
+These exports are generated in the browser from the current local data. They do not require a cloud database.
+
+## Local Audit Trail
+
+The Settings screen shows recent local activity, including invoice saves, tenant changes, imports, Drive metadata writes, payment actions, deletes, restores, and period locks. The audit trail is stored with the local app state, capped to the most recent activity, and included in Drive state sync when Drive is connected.
+
 ## Utility Calculations
 
 Open the Utility Allocation section on a `Utility invoice`.
@@ -247,6 +284,8 @@ Important:
 ## Data And Privacy
 
 This app is local-first. Tenant and invoice data stays in the browser unless you connect Google Drive sync or print/save invoice PDFs.
+
+The operations dashboard, closed periods, CSV exports, and local audit trail also run in the browser and stay in the same local state file.
 
 The current static version does not include:
 

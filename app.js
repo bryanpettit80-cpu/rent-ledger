@@ -2,7 +2,8 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v32";
+  const MAX_AUDIT_EVENTS = 250;
+  const APP_VERSION = "rent-ledger-v33";
   const APP_COMMIT_DATE = "July 2, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -44,6 +45,8 @@
       },
     ],
     invoices: [],
+    closedPeriods: [],
+    auditEvents: [],
   };
 
   let state = loadState();
@@ -142,6 +145,11 @@
       "cycleMissingUtilities",
       "cycleMissingSecurityDeposits",
       "overviewInvoiceList",
+      "billingHealthScore",
+      "billingHealthList",
+      "billingActionList",
+      "delinquencyList",
+      "communicationDraftList",
       "startRentWorkflow",
       "startUtilityWorkflow",
       "startSecurityDepositWorkflow",
@@ -193,6 +201,13 @@
       "backupCount",
       "backupLatest",
       "restoreLatestBackup",
+      "exportInvoiceCsv",
+      "exportTenantStatementCsv",
+      "exportAuditCsv",
+      "lockCurrentCycle",
+      "unlockCurrentCycle",
+      "closedPeriodList",
+      "auditTrailList",
       "googleClientId",
       "driveAutoSync",
       "driveStatus",
@@ -227,6 +242,9 @@
     els.startUtilityWorkflow.addEventListener("click", () => setView("utility"));
     els.startSecurityDepositWorkflow.addEventListener("click", () => setView("security"));
     els.reviewInvoicesWorkflow.addEventListener("click", () => setView("invoices"));
+    if (els.billingActionList) els.billingActionList.addEventListener("click", handleOperationsActionClick);
+    if (els.delinquencyList) els.delinquencyList.addEventListener("click", handleOperationsActionClick);
+    if (els.communicationDraftList) els.communicationDraftList.addEventListener("click", handleOperationsActionClick);
     els.enterApp.addEventListener("click", dismissSplash);
     els.paymentFull.addEventListener("click", () => recordInvoicePayment(paymentDialogInvoiceId, "full"));
     els.paymentPartial.addEventListener("click", showPartialPaymentEntry);
@@ -386,6 +404,11 @@
     if (els.exportBackupSettings) els.exportBackupSettings.addEventListener("click", exportBackup);
     if (els.importBackup) els.importBackup.addEventListener("change", importBackup);
     if (els.restoreLatestBackup) els.restoreLatestBackup.addEventListener("click", restoreLatestBackup);
+    if (els.exportInvoiceCsv) els.exportInvoiceCsv.addEventListener("click", exportInvoiceCsv);
+    if (els.exportTenantStatementCsv) els.exportTenantStatementCsv.addEventListener("click", exportTenantStatementCsv);
+    if (els.exportAuditCsv) els.exportAuditCsv.addEventListener("click", exportAuditCsv);
+    if (els.lockCurrentCycle) els.lockCurrentCycle.addEventListener("click", lockCurrentCycle);
+    if (els.unlockCurrentCycle) els.unlockCurrentCycle.addEventListener("click", unlockCurrentCycle);
   }
 
   function renderAll() {
@@ -399,6 +422,8 @@
     renderTenants();
     renderMetrics();
     renderBackupStatus();
+    renderPeriodLocks(summary);
+    renderAuditTrail();
   }
 
   function createRenderContext(summary = currentCycleSummary()) {
@@ -1190,6 +1215,7 @@
     const actions = invoice
       ? `
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Message</button>
           <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
           isInvoicePaid(invoice) ? "false" : "true"
         }" type="button">${isInvoicePaid(invoice) ? "Reopen" : "Mark paid"}</button>`
@@ -1276,11 +1302,12 @@
   async function handleCycleActionClick(event) {
     const paidButton = event.target.closest("[data-toggle-paid-invoice]");
     const loadButton = event.target.closest("[data-load-invoice]");
+    const messageButton = event.target.closest("[data-copy-invoice-message]");
     const rentButton = event.target.closest("[data-create-rent-invoice]");
     const utilityButton = event.target.closest("[data-create-utility-invoice]");
     const securityButton = event.target.closest("[data-create-security-deposit-invoice]");
 
-    if (paidButton || loadButton) {
+    if (paidButton || loadButton || messageButton) {
       handleInvoiceHistoryClick(event);
       return;
     }
@@ -1554,6 +1581,7 @@
       "Security deposit invoices are complete for active tenants with deposit amounts."
     );
     els.overviewInvoiceList.innerHTML = overviewInvoiceList(summary.cycleInvoices);
+    renderOperationsDashboard(summary);
   }
 
   function currentCycleSummary() {
@@ -1694,6 +1722,403 @@
     return sortInvoicesByNewest(invoices).map((invoice) => renderInvoiceCard(invoice)).join("");
   }
 
+  function renderOperationsDashboard(summary = currentCycleSummary()) {
+    if (!els.billingHealthList || !els.billingActionList) return;
+    const report = buildBillingHealthReport(summary);
+    els.billingHealthScore.textContent = `${report.score}%`;
+    els.billingHealthList.innerHTML = renderOperationsItems(report.checks, "No urgent billing health issues.");
+    els.billingActionList.innerHTML = renderOperationsItems(report.actions, "No cycle actions are pending.");
+    if (els.delinquencyList) {
+      els.delinquencyList.innerHTML = renderInvoiceActionItems(
+        report.overdueInvoices,
+        "No overdue open balances.",
+        (invoice) => {
+          const days = daysPastDue(invoice);
+          return `${formatMoney(calculateTotal(invoice))} due ${formatDate(invoice.dueDate)}${
+            days ? `, ${days} day${days === 1 ? "" : "s"} late` : ""
+          }.`;
+        }
+      );
+    }
+    if (els.communicationDraftList) {
+      els.communicationDraftList.innerHTML = renderCommunicationDrafts(report.communicationInvoices);
+    }
+  }
+
+  function buildBillingHealthReport(summary = currentCycleSummary()) {
+    const checks = [];
+    const actions = [];
+    const overdueInvoices = getOverdueInvoices();
+    const communicationInvoices = getCommunicationDraftInvoices();
+    const duplicateInvoices = findDuplicateInvoices();
+    const missingEmailTenants = summary.activeTenants.filter((tenant) => !String(tenant.email || "").trim());
+    const missingRentTenants = summary.activeTenants.filter((tenant) => toNumber(tenant.rent) <= 0);
+    const utilityUnitIssues = summary.utilityBillableTenants.filter((tenant) => toNumber(tenant.utilityUnits) <= 0);
+    const paidBalanceInvoices = state.invoices.filter(
+      (invoice) => invoice.status === "paid" && calculateTotal(invoice) > 0
+    );
+    const cyclePeriods = cycleLockPeriods(summary);
+    const lockedCyclePeriods = cyclePeriods.filter((period) => periodIsLocked(period.label));
+    const missingWorkCount =
+      summary.missingRent.length + summary.missingUtilities.length + summary.missingSecurityDeposits.length;
+
+    if (!summary.activeTenants.length) {
+      checks.push({
+        tone: "critical",
+        title: "No active tenants",
+        detail: "Add or reactivate tenants before billing this cycle.",
+        actionLabel: "Open tenants",
+        actionView: "tenants",
+      });
+    } else {
+      checks.push({
+        tone: "good",
+        title: "Active tenant list ready",
+        detail: `${summary.activeTenants.length} active tenant${summary.activeTenants.length === 1 ? "" : "s"} available for billing.`,
+      });
+    }
+
+    if (missingRentTenants.length) {
+      checks.push({
+        tone: "critical",
+        title: "Tenant rent missing",
+        detail: `${missingRentTenants.length} active tenant${missingRentTenants.length === 1 ? "" : "s"} have no monthly rent amount.`,
+        actionLabel: "Fix tenants",
+        actionView: "tenants",
+      });
+    }
+
+    if (missingEmailTenants.length) {
+      checks.push({
+        tone: "warning",
+        title: "Tenant email missing",
+        detail: `${missingEmailTenants.length} active tenant${missingEmailTenants.length === 1 ? "" : "s"} need an email before communication drafts are complete.`,
+        actionLabel: "Open tenants",
+        actionView: "tenants",
+      });
+    }
+
+    if (utilityUnitIssues.length) {
+      checks.push({
+        tone: "warning",
+        title: "Utility allocation needs review",
+        detail: `${utilityUnitIssues.length} utility-billable tenant${utilityUnitIssues.length === 1 ? "" : "s"} have zero occupancy units.`,
+        actionLabel: "Fix tenants",
+        actionView: "tenants",
+      });
+    }
+
+    if (duplicateInvoices.length) {
+      checks.push({
+        tone: "warning",
+        title: "Possible duplicate invoices",
+        detail: `${duplicateInvoices.length} duplicate tenant/type/period invoice${duplicateInvoices.length === 1 ? "" : "s"} found.`,
+        actionLabel: "Review invoices",
+        actionView: "invoices",
+      });
+    } else {
+      checks.push({
+        tone: "good",
+        title: "Duplicate check clear",
+        detail: "Saved invoices do not show repeated tenant/type/period combinations.",
+      });
+    }
+
+    if (paidBalanceInvoices.length) {
+      checks.push({
+        tone: "critical",
+        title: "Paid invoice balance mismatch",
+        detail: `${paidBalanceInvoices.length} paid invoice${paidBalanceInvoices.length === 1 ? "" : "s"} still show a balance.`,
+        actionLabel: "Review invoices",
+        actionView: "invoices",
+      });
+    }
+
+    if (overdueInvoices.length) {
+      checks.push({
+        tone: "warning",
+        title: "Open balances past due",
+        detail: `${overdueInvoices.length} invoice${overdueInvoices.length === 1 ? " is" : "s are"} overdue.`,
+      });
+    } else {
+      checks.push({
+        tone: "good",
+        title: "No overdue open balances",
+        detail: "Open invoices are not past their due date.",
+      });
+    }
+
+    if (lockedCyclePeriods.length === cyclePeriods.length && cyclePeriods.length) {
+      checks.push({
+        tone: "good",
+        title: "Current cycle locked",
+        detail: `${cyclePeriods.map((period) => period.label).join(" and ")} require confirmation before changes.`,
+      });
+    } else if (!missingWorkCount && !overdueInvoices.length) {
+      checks.push({
+        tone: "info",
+        title: "Cycle ready to close",
+        detail: "All current-cycle billing is complete. Lock the reviewed periods after final review.",
+      });
+    }
+
+    if (summary.missingRent.length) {
+      actions.push({
+        tone: "warning",
+        title: "Create rent invoices",
+        detail: `${summary.missingRent.length} active tenant${summary.missingRent.length === 1 ? "" : "s"} still need ${summary.period} rent.`,
+        actionLabel: "Open rent",
+        actionView: "rent",
+      });
+    }
+    if (summary.missingUtilities.length) {
+      actions.push({
+        tone: "warning",
+        title: "Calculate utilities",
+        detail: `${summary.missingUtilities.length} utility-billable tenant${summary.missingUtilities.length === 1 ? "" : "s"} still need ${summary.utilityPeriod} utilities.`,
+        actionLabel: "Open utilities",
+        actionView: "utility",
+      });
+    }
+    if (summary.missingSecurityDeposits.length) {
+      actions.push({
+        tone: "warning",
+        title: "Create security deposit invoices",
+        detail: `${summary.missingSecurityDeposits.length} tenant${summary.missingSecurityDeposits.length === 1 ? "" : "s"} still need deposit invoices.`,
+        actionLabel: "Open deposits",
+        actionView: "security",
+      });
+    }
+    if (overdueInvoices.length) {
+      actions.push({
+        tone: "warning",
+        title: "Follow up on overdue balances",
+        detail: `${formatMoney(overdueInvoices.reduce((total, invoice) => total + calculateTotal(invoice), 0))} is past due.`,
+        actionLabel: "Review invoices",
+        actionView: "invoices",
+      });
+    }
+    if (!missingWorkCount && !overdueInvoices.length && lockedCyclePeriods.length < cyclePeriods.length) {
+      actions.push({
+        tone: "info",
+        title: "Lock reviewed periods",
+        detail: "Locking adds a confirmation step before invoices in the current rent and utility periods can change.",
+        actionLabel: "Lock cycle",
+        lockCurrentCycle: true,
+      });
+    }
+
+    const penalty = checks.reduce((total, item) => {
+      if (item.tone === "critical") return total + 25;
+      if (item.tone === "warning") return total + 12;
+      return total;
+    }, 0);
+
+    return {
+      checks,
+      actions,
+      overdueInvoices,
+      communicationInvoices,
+      score: Math.max(0, Math.min(100, 100 - penalty)),
+    };
+  }
+
+  function renderOperationsItems(items, emptyMessage) {
+    if (!items.length) return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
+    return items
+      .map((item) => {
+        const action = operationActionButton(item);
+        return `
+          <article class="operations-item is-${escapeAttr(item.tone || "info")}">
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <p>${escapeHtml(item.detail)}</p>
+            </div>
+            ${action ? `<div class="card-actions">${action}</div>` : ""}
+          </article>`;
+      })
+      .join("");
+  }
+
+  function operationActionButton(item) {
+    if (!item.actionLabel) return "";
+    if (item.actionView) {
+      return `<button class="small-button" data-open-view="${escapeAttr(item.actionView)}" type="button">${escapeHtml(
+        item.actionLabel
+      )}</button>`;
+    }
+    if (item.lockCurrentCycle) {
+      return `<button class="small-button" data-lock-current-cycle type="button">${escapeHtml(item.actionLabel)}</button>`;
+    }
+    return "";
+  }
+
+  function renderInvoiceActionItems(invoices, emptyMessage, detailForInvoice) {
+    if (!invoices.length) return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
+    return invoices
+      .map((invoice) => renderInvoiceMiniItem(invoice, detailForInvoice(invoice), { includePayment: true }))
+      .join("");
+  }
+
+  function renderCommunicationDrafts(invoices) {
+    if (!invoices.length) return `<div class="empty-state">No open invoice messages to prepare.</div>`;
+    return invoices
+      .map((invoice) => {
+        const tenant = getTenant(invoice.tenantId);
+        const emailHref = invoiceMailtoHref(invoice);
+        const emailAction = emailHref ? `<a class="small-button" href="${escapeAttr(emailHref)}">Email</a>` : "";
+        return renderInvoiceMiniItem(invoice, invoiceMessageSubject(invoice), {
+          tone: tenant?.email ? "info" : "warning",
+          includePayment: false,
+          extraActions: emailAction,
+        });
+      })
+      .join("");
+  }
+
+  function renderInvoiceMiniItem(invoice, detail, options = {}) {
+    const tenant = getTenant(invoice.tenantId);
+    const tone = options.tone || (daysPastDue(invoice) ? "warning" : "info");
+    const paid = isInvoicePaid(invoice);
+    const paymentAction = options.includePayment
+      ? `<button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
+          paid ? "false" : "true"
+        }" type="button">${paid ? "Reopen" : "Mark paid"}</button>`
+      : "";
+    return `
+      <article class="operations-item is-${escapeAttr(tone)}">
+        <div>
+          <strong>${escapeHtml(invoice.invoiceNumber || "Invoice")} - ${escapeHtml(tenantDisplayLabel(tenant))}</strong>
+          <p>${escapeHtml(detail)}</p>
+        </div>
+        <div class="card-actions">
+          <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Copy message</button>
+          ${paymentAction}
+          ${options.extraActions || ""}
+        </div>
+      </article>`;
+  }
+
+  function handleOperationsActionClick(event) {
+    const viewButton = event.target.closest("[data-open-view]");
+    const lockButton = event.target.closest("[data-lock-current-cycle]");
+    const invoiceAction = event.target.closest(
+      "[data-load-invoice], [data-toggle-paid-invoice], [data-delete-invoice], [data-copy-invoice-message]"
+    );
+
+    if (viewButton) {
+      setView(viewButton.dataset.openView);
+      return;
+    }
+    if (lockButton) {
+      lockCurrentCycle();
+      return;
+    }
+    if (invoiceAction) {
+      handleInvoiceHistoryClick(event);
+    }
+  }
+
+  function getOverdueInvoices() {
+    return state.invoices
+      .filter((invoice) => invoice.status !== "paid" && calculateTotal(invoice) > 0 && daysPastDue(invoice) > 0)
+      .sort(compareInvoicesByDueDate);
+  }
+
+  function getCommunicationDraftInvoices() {
+    return state.invoices
+      .filter((invoice) => invoice.status !== "paid" && calculateTotal(invoice) > 0)
+      .sort(compareInvoicesByDueDate)
+      .slice(0, 5);
+  }
+
+  function compareInvoicesByDueDate(a, b) {
+    const dueA = parseDateInput(a.dueDate)?.getTime() || Number.MAX_SAFE_INTEGER;
+    const dueB = parseDateInput(b.dueDate)?.getTime() || Number.MAX_SAFE_INTEGER;
+    if (dueA !== dueB) return dueA - dueB;
+    return `${a.invoiceNumber || ""}`.localeCompare(`${b.invoiceNumber || ""}`);
+  }
+
+  function daysPastDue(invoice) {
+    const dueDate = parseDateInput(invoice?.dueDate);
+    if (!dueDate) return 0;
+    const today = parseDateInput(toDateInput(new Date()));
+    return Math.max(0, Math.floor((today.getTime() - dueDate.getTime()) / 86400000));
+  }
+
+  function findDuplicateInvoices() {
+    const seen = new Map();
+    const duplicates = [];
+    state.invoices.forEach((invoice) => {
+      if (!invoice.tenantId || !invoice.billingPeriod) return;
+      const key = [
+        invoice.tenantId,
+        normalizeInvoiceType(invoice.invoiceType),
+        normalizeCycleLabel(invoice.billingPeriod),
+      ].join("|");
+      if (seen.has(key)) {
+        duplicates.push(invoice);
+      } else {
+        seen.set(key, invoice);
+      }
+    });
+    return duplicates;
+  }
+
+  async function copyInvoiceMessage(invoiceId) {
+    const invoice = state.invoices.find((item) => item.id === invoiceId);
+    if (!invoice) return;
+    const message = invoiceMessage(invoice);
+    try {
+      await navigator.clipboard.writeText(message);
+      showToast("Message copied.");
+    } catch (error) {
+      console.warn("Unable to copy invoice message.", error);
+      showToast("Copy unavailable in this browser.");
+    }
+  }
+
+  function invoiceMessageSubject(invoice) {
+    return `${invoice.invoiceNumber || "Invoice"} ${invoice.billingPeriod || ""} balance ${formatMoney(
+      calculateTotal(invoice)
+    )}`.trim();
+  }
+
+  function invoiceMessage(invoice) {
+    const tenant = getTenant(invoice.tenantId);
+    const firstName = String(tenant?.name || "").trim().split(/\s+/)[0] || "there";
+    const balanceLabel = invoice.status === "partial" ? "remaining balance" : "balance";
+    const dueLabel = invoice.dueDate ? ` due ${formatDate(invoice.dueDate)}` : "";
+    return [
+      `Hello ${firstName},`,
+      "",
+      `This is a reminder for ${invoice.invoiceNumber || "your invoice"} (${invoiceTypeLabel(
+        invoice.invoiceType
+      )}) for ${invoice.billingPeriod || "the current billing period"}.`,
+      `The ${balanceLabel}${dueLabel} is ${formatMoney(calculateTotal(invoice))}.`,
+      state.landlord.paymentInstructions ? `Payment instructions: ${state.landlord.paymentInstructions}` : null,
+      "",
+      "Thank you,",
+      state.landlord.name || "Rent Ledger",
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
+  }
+
+  function invoiceMailtoHref(invoice) {
+    const tenant = getTenant(invoice.tenantId);
+    const email = String(tenant?.email || "").trim();
+    if (!email) return "";
+    return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(
+      invoiceMessageSubject(invoice)
+    )}&body=${encodeURIComponent(invoiceMessage(invoice))}`;
+  }
+
+  function tenantDisplayLabel(tenant) {
+    return [tenant?.name, tenant?.unit].filter(Boolean).join(" - ") || "Tenant";
+  }
+
   function sortInvoicesByNewest(invoices) {
     return [...invoices].sort((a, b) => {
       return `${b.issueDate || ""}${b.invoiceNumber}`.localeCompare(`${a.issueDate || ""}${a.invoiceNumber}`);
@@ -1716,6 +2141,7 @@
         </div>
         <div class="card-actions">
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
+          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Message</button>
           <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
             paid ? "false" : "true"
           }" type="button">${paid ? "Reopen" : "Mark paid"}</button>
@@ -1748,6 +2174,10 @@
     invoice.updatedAt = new Date().toISOString();
 
     const existingIndex = state.invoices.findIndex((item) => item.id === invoice.id);
+    const lockedInvoice = existingIndex >= 0 ? state.invoices[existingIndex] : invoice;
+    if (!confirmLockedInvoiceChange(lockedInvoice, existingIndex >= 0 ? "save changes to this invoice" : "save this invoice")) {
+      return null;
+    }
     if (existingIndex >= 0) {
       state.invoices[existingIndex] = invoice;
     } else {
@@ -1799,6 +2229,7 @@
   function openPaymentDialog(invoiceId) {
     const invoice = state.invoices.find((item) => item.id === invoiceId);
     if (!invoice) return;
+    if (!confirmLockedInvoiceChange(invoice, "record a payment")) return;
     const balance = calculateTotal(invoice);
     if (balance <= 0) {
       invoice.status = "paid";
@@ -1898,6 +2329,7 @@
   function reopenInvoice(invoiceId) {
     const invoice = state.invoices.find((item) => item.id === invoiceId);
     if (!invoice) return;
+    if (!confirmLockedInvoiceChange(invoice, "reopen this invoice")) return;
     invoice.status = "open";
     invoice.payments = [];
     clearInvoiceDriveMetadata(invoice);
@@ -1914,9 +2346,15 @@
     const paidButton = event.target.closest("[data-toggle-paid-invoice]");
     const loadButton = event.target.closest("[data-load-invoice]");
     const deleteButton = event.target.closest("[data-delete-invoice]");
+    const messageButton = event.target.closest("[data-copy-invoice-message]");
 
     if (paidButton) {
       setInvoicePaid(paidButton.dataset.togglePaidInvoice, paidButton.dataset.paid === "true");
+      return;
+    }
+
+    if (messageButton) {
+      copyInvoiceMessage(messageButton.dataset.copyInvoiceMessage);
       return;
     }
 
@@ -1927,6 +2365,8 @@
 
     if (deleteButton) {
       const id = deleteButton.dataset.deleteInvoice;
+      const invoice = state.invoices.find((item) => item.id === id);
+      if (!confirmLockedInvoiceChange(invoice, "delete this invoice")) return;
       if (!window.confirm("Delete this saved invoice?")) return;
       state.invoices = state.invoices.filter((invoice) => invoice.id !== id);
       if (selectedInvoiceId === id) startNewInvoice();
@@ -1937,9 +2377,19 @@
   }
 
   function clearPaidInvoices() {
-    const paidCount = state.invoices.filter((invoice) => invoice.status === "paid").length;
+    const paidInvoices = state.invoices.filter((invoice) => invoice.status === "paid");
+    const paidCount = paidInvoices.length;
     if (!paidCount) {
       showToast("No paid invoices to delete.");
+      return;
+    }
+    const lockedPaidCount = paidInvoices.filter(invoicePeriodLocked).length;
+    if (
+      lockedPaidCount &&
+      !window.confirm(
+        `${lockedPaidCount} paid invoice${lockedPaidCount === 1 ? "" : "s"} are in locked periods. Continue?`
+      )
+    ) {
       return;
     }
     if (!window.confirm(`Delete ${paidCount} paid invoice${paidCount === 1 ? "" : "s"}? This cannot be undone.`)) return;
@@ -2443,6 +2893,8 @@
         landlord: { ...defaultState.landlord, ...(parsed.landlord || {}) },
         tenants: Array.isArray(parsed.tenants) ? parsed.tenants : clone(defaultState.tenants),
         invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
+        closedPeriods: Array.isArray(parsed.closedPeriods) ? parsed.closedPeriods : [],
+        auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
       });
     } catch (error) {
       console.warn("Unable to load saved Rent Ledger data.", error);
@@ -2486,10 +2938,13 @@
     queueDriveSync(reason);
   }
 
-  function writeLocalState(reason = "Saved data") {
+  function writeLocalState(reason = "Saved data", options = {}) {
+    if (options.audit !== false) recordAuditEvent(reason);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     recordLocalBackup(reason, state);
     renderBackupStatus();
+    renderAuditTrail();
+    renderPeriodLocks();
   }
 
   function exportBackup() {
@@ -2503,6 +2958,274 @@
     link.remove();
     URL.revokeObjectURL(url);
     showToast("Backup exported.");
+  }
+
+  function exportInvoiceCsv() {
+    const rows = [
+      [
+        "Invoice Number",
+        "Type",
+        "Tenant",
+        "Unit",
+        "Billing Period",
+        "Issue Date",
+        "Due Date",
+        "Status",
+        "Charges",
+        "Credits",
+        "Payments",
+        "Balance",
+        "Drive PDF",
+        "Updated At",
+      ],
+    ];
+    sortInvoicesByNewest(state.invoices).forEach((invoice) => {
+      const tenant = getTenant(invoice.tenantId);
+      rows.push([
+        invoice.invoiceNumber,
+        invoiceTypeLabel(invoice.invoiceType),
+        tenant?.name || "",
+        tenant?.unit || "",
+        invoice.billingPeriod || "",
+        invoice.issueDate || "",
+        invoice.dueDate || "",
+        invoiceStatusText(invoice),
+        moneyCsvCell(sumLineItems(invoice.lineItems) + toNumber(invoice.previousBalance)),
+        moneyCsvCell(invoice.credits),
+        moneyCsvCell(invoicePaymentTotal(invoice)),
+        moneyCsvCell(calculateTotal(invoice)),
+        invoice.drivePdfFileName || "",
+        invoice.updatedAt || "",
+      ]);
+    });
+    downloadTextFile(`rent-ledger-invoices-${timestampForFile(new Date())}.csv`, toCsv(rows), "text/csv");
+    showToast("Invoice CSV exported.");
+  }
+
+  function exportTenantStatementCsv() {
+    const rows = [
+      [
+        "Tenant",
+        "Unit",
+        "Active",
+        "Email",
+        "Monthly Rent",
+        "Security Deposit",
+        "Open Invoices",
+        "Overdue Invoices",
+        "Open Balance",
+        "Last Invoice Date",
+      ],
+    ];
+    state.tenants.forEach((tenant) => {
+      const tenantInvoices = state.invoices.filter((invoice) => invoice.tenantId === tenant.id);
+      const openInvoices = tenantInvoices.filter((invoice) => invoice.status !== "paid" && calculateTotal(invoice) > 0);
+      rows.push([
+        tenant.name || "",
+        tenant.unit || "",
+        tenant.active === false ? "Inactive" : "Active",
+        tenant.email || "",
+        moneyCsvCell(tenant.rent),
+        moneyCsvCell(tenant.securityDeposit),
+        String(openInvoices.length),
+        String(openInvoices.filter((invoice) => daysPastDue(invoice) > 0).length),
+        moneyCsvCell(openInvoices.reduce((total, invoice) => total + calculateTotal(invoice), 0)),
+        sortInvoicesByNewest(tenantInvoices)[0]?.issueDate || "",
+      ]);
+    });
+    downloadTextFile(`rent-ledger-tenant-balances-${timestampForFile(new Date())}.csv`, toCsv(rows), "text/csv");
+    showToast("Tenant balances CSV exported.");
+  }
+
+  function exportAuditCsv() {
+    const rows = [["Created At", "Type", "Message", "Tenant Count", "Invoice Count"]];
+    normalizeAuditEvents(state.auditEvents).forEach((event) => {
+      rows.push([
+        event.createdAt,
+        event.type,
+        event.message,
+        String(event.tenantCount),
+        String(event.invoiceCount),
+      ]);
+    });
+    downloadTextFile(`rent-ledger-audit-${timestampForFile(new Date())}.csv`, toCsv(rows), "text/csv");
+    showToast("Audit CSV exported.");
+  }
+
+  function toCsv(rows) {
+    return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? "");
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function moneyCsvCell(value) {
+    return roundMoney(toNumber(value)).toFixed(2);
+  }
+
+  function downloadTextFile(filename, content, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function recordAuditEvent(reason = "Saved data") {
+    const message = String(reason || "Saved data").trim();
+    if (!message) return;
+    const event = {
+      id: cryptoId(),
+      createdAt: new Date().toISOString(),
+      type: auditTypeForReason(message),
+      message,
+      tenantCount: state.tenants.length,
+      invoiceCount: state.invoices.length,
+    };
+    state.auditEvents = [event, ...normalizeAuditEvents(state.auditEvents)].slice(0, MAX_AUDIT_EVENTS);
+  }
+
+  function auditTypeForReason(reason) {
+    const lower = String(reason || "").toLowerCase();
+    if (lower.includes("delete")) return "delete";
+    if (lower.includes("payment") || lower.includes("paid") || lower.includes("reopened")) return "payment";
+    if (lower.includes("import") || lower.includes("loaded") || lower.includes("restored")) return "import";
+    if (lower.includes("drive")) return "drive";
+    if (lower.includes("lock")) return "period";
+    if (lower.includes("tenant")) return "tenant";
+    if (lower.includes("invoice")) return "invoice";
+    return "state";
+  }
+
+  function renderAuditTrail() {
+    if (!els.auditTrailList) return;
+    const events = normalizeAuditEvents(state.auditEvents).slice(0, 10);
+    if (!events.length) {
+      els.auditTrailList.innerHTML = `<div class="empty-state">No local activity recorded yet.</div>`;
+      return;
+    }
+    els.auditTrailList.innerHTML = events
+      .map(
+        (event) => `
+          <article class="audit-item">
+            <div>
+              <strong>${escapeHtml(event.message)}</strong>
+              <p>${escapeHtml(formatDateTime(event.createdAt))} &middot; ${escapeHtml(event.type)} &middot; ${
+                event.invoiceCount
+              } invoice${event.invoiceCount === 1 ? "" : "s"}</p>
+            </div>
+          </article>`
+      )
+      .join("");
+  }
+
+  function renderPeriodLocks(summary = currentCycleSummary()) {
+    if (!els.closedPeriodList) return;
+    const cyclePeriods = cycleLockPeriods(summary);
+    const lockedCyclePeriods = cyclePeriods.filter((period) => periodIsLocked(period.label));
+    if (els.lockCurrentCycle) els.lockCurrentCycle.disabled = lockedCyclePeriods.length === cyclePeriods.length;
+    if (els.unlockCurrentCycle) els.unlockCurrentCycle.disabled = lockedCyclePeriods.length === 0;
+
+    const closedPeriods = normalizeClosedPeriods(state.closedPeriods);
+    state.closedPeriods = closedPeriods;
+    if (!closedPeriods.length) {
+      els.closedPeriodList.innerHTML = `<div class="empty-state">No billing periods are locked.</div>`;
+      return;
+    }
+
+    els.closedPeriodList.innerHTML = closedPeriods
+      .map(
+        (period) => `
+          <article class="operations-item is-info">
+            <div>
+              <strong>${escapeHtml(period.label)}</strong>
+              <p>Locked ${escapeHtml(formatDateTime(period.lockedAt) || "locally")}.</p>
+            </div>
+          </article>`
+      )
+      .join("");
+  }
+
+  function lockCurrentCycle() {
+    const summary = currentCycleSummary();
+    const periods = cycleLockPeriods(summary);
+    const now = new Date().toISOString();
+    const added = [];
+
+    periods.forEach((period) => {
+      if (periodIsLocked(period.label)) return;
+      state.closedPeriods.push({
+        id: cryptoId(),
+        label: period.label,
+        normalized: periodLockKey(period.label),
+        lockedAt: now,
+      });
+      added.push(period.label);
+    });
+
+    if (!added.length) {
+      showToast("Current cycle is already locked.");
+      return;
+    }
+
+    saveState("Locked current cycle");
+    renderAll();
+    showToast(`Locked ${added.join(" and ")}.`);
+  }
+
+  function unlockCurrentCycle() {
+    const summary = currentCycleSummary();
+    const lockedKeys = new Set(
+      cycleLockPeriods(summary)
+        .map((period) => periodLockKey(period.label))
+        .filter(Boolean)
+    );
+    const lockedPeriods = normalizeClosedPeriods(state.closedPeriods).filter((period) => lockedKeys.has(period.normalized));
+    if (!lockedPeriods.length) {
+      showToast("Current cycle is not locked.");
+      return;
+    }
+    if (!window.confirm(`Unlock ${lockedPeriods.map((period) => period.label).join(" and ")}?`)) return;
+    state.closedPeriods = normalizeClosedPeriods(state.closedPeriods).filter((period) => !lockedKeys.has(period.normalized));
+    saveState("Unlocked current cycle");
+    renderAll();
+    showToast("Current cycle unlocked.");
+  }
+
+  function cycleLockPeriods(summary = currentCycleSummary()) {
+    const periods = new Map();
+    [summary.period, summary.utilityPeriod].forEach((label) => {
+      const normalized = periodLockKey(label);
+      if (normalized) periods.set(normalized, { label });
+    });
+    return [...periods.values()];
+  }
+
+  function periodIsLocked(label) {
+    const normalized = periodLockKey(label);
+    if (!normalized) return false;
+    return normalizeClosedPeriods(state.closedPeriods).some((period) => period.normalized === normalized);
+  }
+
+  function periodLockKey(label) {
+    const clean = String(label || "").trim();
+    return clean ? normalizeCycleLabel(clean) : "";
+  }
+
+  function invoicePeriodLocked(invoice) {
+    return periodIsLocked(invoice?.billingPeriod);
+  }
+
+  function confirmLockedInvoiceChange(invoice, actionLabel) {
+    if (!invoicePeriodLocked(invoice)) return true;
+    const period = invoice?.billingPeriod || "this period";
+    return window.confirm(`${period} is locked. Continue to ${actionLabel}?`);
   }
 
   async function connectDrive() {
@@ -3481,6 +4204,8 @@
       landlord,
       tenants: Array.isArray(value?.tenants) ? value.tenants.map(normalizeTenant) : [],
       invoices: Array.isArray(value?.invoices) ? value.invoices.map(normalizeInvoice) : [],
+      closedPeriods: normalizeClosedPeriods(value?.closedPeriods),
+      auditEvents: normalizeAuditEvents(value?.auditEvents),
     };
   }
 
@@ -3531,6 +4256,41 @@
         method: String(payment?.method || "Payment").trim(),
       }))
       .filter((payment) => payment.amount > 0);
+  }
+
+  function normalizeClosedPeriods(periods) {
+    if (!Array.isArray(periods)) return [];
+    const normalizedPeriods = [];
+    const seen = new Set();
+    periods.forEach((period) => {
+      const rawLabel = typeof period === "string" ? period : period?.label || period?.period || "";
+      const label = String(rawLabel || "").trim();
+      const normalized = periodLockKey(label);
+      if (!label || !normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      normalizedPeriods.push({
+        id: period?.id || cryptoId(),
+        label,
+        normalized,
+        lockedAt: String(period?.lockedAt || period?.createdAt || ""),
+      });
+    });
+    return normalizedPeriods;
+  }
+
+  function normalizeAuditEvents(events) {
+    if (!Array.isArray(events)) return [];
+    return events
+      .map((event) => ({
+        id: event?.id || cryptoId(),
+        createdAt: String(event?.createdAt || event?.timestamp || ""),
+        type: String(event?.type || "state"),
+        message: String(event?.message || event?.reason || "Saved data"),
+        tenantCount: Number.isFinite(Number(event?.tenantCount)) ? Number(event.tenantCount) : 0,
+        invoiceCount: Number.isFinite(Number(event?.invoiceCount)) ? Number(event.invoiceCount) : 0,
+      }))
+      .filter((event) => event.message)
+      .slice(0, MAX_AUDIT_EVENTS);
   }
 
   function registerServiceWorker() {
@@ -3635,13 +4395,19 @@
 
   function formatDate(value) {
     if (!value) return "";
-    const date = new Date(`${value}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return value;
+    const date = parseDateInput(value);
+    if (!date) return value;
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     }).format(date);
+  }
+
+  function parseDateInput(value) {
+    if (!value) return null;
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 
   function formatDateTime(value) {

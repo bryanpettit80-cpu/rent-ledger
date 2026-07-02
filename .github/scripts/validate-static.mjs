@@ -69,6 +69,13 @@ assert(files.html.includes('placeholder="July 2026"'), "Billing period placehold
 assert(files.html.includes("Connect Drive"), "Settings must include Connect Drive.");
 assert(files.html.includes("Download from Drive"), "Settings must include Download from Drive.");
 assert(files.html.includes("Upload to Drive"), "Settings must include Upload to Drive.");
+assert(files.html.includes('id="billingHealthList"'), "Overview must include billing health checks.");
+assert(files.html.includes('id="delinquencyList"'), "Overview must include overdue balance follow-up.");
+assert(files.html.includes('id="communicationDraftList"'), "Overview must include communication drafts.");
+assert(files.html.includes('id="auditTrailList"'), "Settings must include the local audit trail.");
+assert(files.html.includes('id="exportInvoiceCsv"'), "Settings must include invoice CSV export.");
+assert(files.html.includes('id="lockCurrentCycle"'), "Settings must include current-cycle lock controls.");
+assert(files.html.includes('id="closedPeriodList"'), "Settings must show closed periods.");
 assert(!files.html.includes("Save connection settings"), "Settings must not include the removed Save connection settings button.");
 assert(!files.html.includes('id="markPaid"'), "Invoice editor must not include the old header Mark paid button.");
 assert(!files.html.includes('id="newInvoice"'), "Invoice editor must not include the old Start new button.");
@@ -109,6 +116,17 @@ assert(files.app.includes("return `${prefix}-${year}-${month}-${String(next).pad
 assert(files.app.includes(".replace(/^\\d{1,2}\\s*[-/]\\s*/, \"\")"), "Cycle matching must handle old labels without month numbers.");
 assert(files.app.includes("/^(INV|RNT|UTL|DEP)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Generated invoice detection must accept old and month-coded invoice numbers.");
 assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
+assert(files.app.includes("function renderOperationsDashboard"), "app.js must render the billing health dashboard.");
+assert(files.app.includes("function getOverdueInvoices"), "app.js must calculate overdue balances.");
+assert(files.app.includes("function copyInvoiceMessage"), "app.js must generate copyable tenant message drafts.");
+assert(files.app.includes("function exportInvoiceCsv"), "app.js must include invoice CSV export.");
+assert(files.app.includes("function exportTenantStatementCsv"), "app.js must include tenant balance CSV export.");
+assert(files.app.includes("function recordAuditEvent"), "app.js must record a local audit trail.");
+assert(files.app.includes("function normalizeClosedPeriods"), "app.js must persist closed billing periods.");
+assert(files.app.includes("function confirmLockedInvoiceChange"), "app.js must guard locked-period invoice changes.");
+assert(files.app.includes("data-copy-invoice-message"), "Saved invoice rows must expose message draft actions.");
+assert(files.app.includes("closedPeriods: normalizeClosedPeriods"), "State normalization must retain closed periods.");
+assert(files.app.includes("auditEvents: normalizeAuditEvents"), "State normalization must retain audit events.");
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
 assert(
@@ -130,9 +148,14 @@ assert(files.readme.includes("Saved locally"), "README must document the saved-l
 assert(files.readme.includes("Saved to Drive"), "README must document the saved-to-Drive state.");
 assert(files.readme.includes("Drive PDF metadata"), "README must explain saved-to-Drive metadata.");
 assert(files.readme.includes("Credits or adjustments reduce the balance"), "README must explain credit and payment balance handling.");
+assert(files.readme.includes("Operations Dashboard"), "README must document the operations dashboard.");
+assert(files.readme.includes("Closed Periods"), "README must document closed-period controls.");
+assert(files.readme.includes("CSV Exports"), "README must document report exports.");
+assert(files.readme.includes("Local Audit Trail"), "README must document the audit trail.");
 assert(files.readme.includes("Release Checklist"), "README must include the static release checklist.");
 assert(files.bumpVersion.includes("incrementVersion"), "Version bump helper must increment APP_VERSION.");
 assert(files.smokeTest.includes("long invoice PDF to paginate"), "Smoke test must cover multi-page invoice PDFs.");
+assert(files.smokeTest.includes("billingHealthScore"), "Smoke test must cover the operations dashboard.");
 
 if (failures.length) {
   console.error("Static validation failed:");

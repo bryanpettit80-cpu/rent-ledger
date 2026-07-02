@@ -130,6 +130,11 @@ try {
     rentCount: document.getElementById("rentWorkflowCount")?.textContent?.trim(),
     utilityCount: document.getElementById("utilityWorkflowCount")?.textContent?.trim(),
     securityDepositCount: document.getElementById("securityDepositWorkflowCount")?.textContent?.trim(),
+    healthScore: document.getElementById("billingHealthScore")?.textContent?.trim(),
+    healthText: document.getElementById("billingHealthList")?.textContent || "",
+    actionText: document.getElementById("billingActionList")?.textContent || "",
+    overdueText: document.getElementById("delinquencyList")?.textContent || "",
+    communicationText: document.getElementById("communicationDraftList")?.textContent || "",
     navWidth: Math.round(document.querySelector(".nav-tabs")?.getBoundingClientRect().width || 0),
     settingsWidth: Math.round(document.querySelector('[data-view="settings"]')?.getBoundingClientRect().width || 0),
   }));
@@ -147,6 +152,11 @@ try {
     overviewState.securityDepositCount === "2 remaining",
     `Expected 2 security deposit invoices remaining, got ${overviewState.securityDepositCount}.`
   );
+  assert(/^\d+%$/.test(overviewState.healthScore || ""), `Expected health score percentage, got ${overviewState.healthScore}.`);
+  assert(overviewState.healthText.includes("Tenant email missing"), "Health checks should flag missing tenant emails.");
+  assert(overviewState.actionText.includes("Create rent invoices"), "Action list should include rent billing work.");
+  assert(overviewState.overdueText.includes("No overdue open balances"), "Overdue list should start clear.");
+  assert(overviewState.communicationText.includes("No open invoice messages"), "Communication queue should start empty.");
   assert(
     Math.abs(overviewState.settingsWidth + 2 - overviewState.navWidth) <= 1,
     `Expected Settings to fill the bottom nav row, got ${overviewState.settingsWidth} of ${overviewState.navWidth}.`
@@ -754,14 +764,28 @@ try {
   await page.click('[data-view="settings"]');
   const settingsState = await page.evaluate(() => ({
     buttons: [...document.querySelectorAll(".drive-tools .button-row button")].map((button) => button.textContent.trim()),
+    reportButtons: [...document.querySelectorAll(".report-tools .button-row button")].map((button) => button.textContent.trim()),
+    lockButtons: [...document.querySelectorAll(".lock-tools .button-row button")].map((button) => button.textContent.trim()),
     driveStatus: document.getElementById("driveStatus")?.textContent?.trim(),
     help: document.querySelector(".drive-tools > .field-help")?.textContent?.trim(),
+    auditText: document.getElementById("auditTrailList")?.textContent || "",
+    closedPeriodText: document.getElementById("closedPeriodList")?.textContent || "",
     hasSaveConnection: document.body.textContent.includes("Save connection settings"),
   }));
   assert(
     settingsState.buttons.join("|") === "Connect Drive|Download from Drive|Upload to Drive",
     `Unexpected Drive buttons: ${settingsState.buttons.join("|")}.`
   );
+  assert(
+    settingsState.reportButtons.join("|") === "Invoice CSV|Tenant balances CSV|Audit CSV",
+    `Unexpected report buttons: ${settingsState.reportButtons.join("|")}.`
+  );
+  assert(
+    settingsState.lockButtons.join("|") === "Lock current cycle|Unlock current cycle",
+    `Unexpected lock buttons: ${settingsState.lockButtons.join("|")}.`
+  );
+  assert(settingsState.auditText.includes("invoice"), `Expected audit trail to include saved activity, got: ${settingsState.auditText}.`);
+  assert(settingsState.closedPeriodText.includes("No billing periods are locked"), "Closed period list should start unlocked.");
   assert(!settingsState.hasSaveConnection, "Removed Save connection settings text should not be present.");
   assert(
     [
@@ -773,6 +797,32 @@ try {
     `Unexpected Drive status: ${settingsState.driveStatus}.`
   );
   assert(settingsState.help.includes("Download replaces this browser's data"), "Drive help must explain Upload and Download.");
+
+  await page.click("#lockCurrentCycle");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return (state.closedPeriods || []).length >= 2;
+  });
+  const lockedState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      closedPeriods: state.closedPeriods || [],
+      lockDisabled: document.getElementById("lockCurrentCycle")?.disabled,
+      unlockDisabled: document.getElementById("unlockCurrentCycle")?.disabled,
+      closedPeriodText: document.getElementById("closedPeriodList")?.textContent || "",
+    };
+  });
+  assert(lockedState.lockDisabled === true, "Lock current cycle should disable after locking.");
+  assert(lockedState.unlockDisabled === false, "Unlock current cycle should enable after locking.");
+  assert(
+    lockedState.closedPeriods.some((period) => period.label === expectedRentPeriod) &&
+      lockedState.closedPeriods.some((period) => period.label === expectedUtilityPeriod),
+    `Expected locked rent and utility periods, got ${lockedState.closedPeriods.map((period) => period.label).join(", ")}.`
+  );
+  assert(
+    lockedState.closedPeriodText.includes(expectedRentPeriod) && lockedState.closedPeriodText.includes(expectedUtilityPeriod),
+    `Closed period list should render locked periods, got: ${lockedState.closedPeriodText}.`
+  );
 
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";
   await page.evaluate(() => {

@@ -306,6 +306,82 @@ button {
   font-weight: 800;
 }
 
+.operations-panel {
+  grid-column: 1 / -1;
+}
+
+.operations-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px 22px 22px;
+}
+
+.operations-grid h3 {
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.operations-list,
+.audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.audit-list {
+  padding: 8px 22px 22px;
+}
+
+.operations-item,
+.audit-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-muted);
+}
+
+.operations-item strong,
+.audit-item strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.operations-item p,
+.audit-item p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.operations-item.is-critical {
+  border-left-color: var(--danger);
+}
+
+.operations-item.is-warning {
+  border-left-color: var(--warn);
+}
+
+.operations-item.is-good,
+.operations-item.is-info,
+.audit-item {
+  border-left-color: var(--accent);
+}
+
+.operations-item .card-actions,
+.audit-item .card-actions {
+  margin-top: 4px;
+}
+
+.closed-period-list {
+  margin-top: 4px;
+}
+
 .overview-invoices {
   padding: 8px 22px 22px;
 }
@@ -642,11 +718,15 @@ button:focus-visible {
 .primary-button,
 .secondary-button,
 .small-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: var(--tap);
   border-radius: var(--radius);
   border: 1px solid transparent;
   padding: 0 16px;
   font-weight: 800;
+  text-decoration: none;
 }
 
 .primary-button {
@@ -911,6 +991,7 @@ button:focus-visible {
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1149,6 +1230,7 @@ button:focus-visible {
   .grid.four,
   .line-item,
   .cycle-row,
+  .operations-grid,
   .doc-grid {
     grid-template-columns: 1fr;
   }
@@ -1218,6 +1300,16 @@ button:focus-visible {
   .overview-metrics,
   .splash-meta {
     grid-template-columns: 1fr;
+  }
+
+  .operations-grid {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .audit-list {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }
 
