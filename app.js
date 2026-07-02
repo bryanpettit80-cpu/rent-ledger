@@ -2,7 +2,7 @@
   const STORAGE_KEY = "rent-ledger:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
-  const APP_VERSION = "rent-ledger-v30";
+  const APP_VERSION = "rent-ledger-v31";
   const APP_COMMIT_DATE = "July 2, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -269,7 +269,8 @@
     ].forEach((input) => {
       input.addEventListener("input", () => {
         syncDraftFromForm();
-        scheduleDraftRender({ includeUtility: true, includeOverview: true });
+        markDirty();
+        scheduleDraftRender({ includeUtility: true, includeOverview: true, markDirty: false });
       });
     });
 
@@ -297,7 +298,13 @@
         cycleUtilityCalculation = readCycleUtilityCalculation();
         draft.utilityCalculation = utilityCalculationForTenant(getTenant(draft.tenantId), cycleUtilityCalculation);
         fillUtilityCalculationForm(draft.utilityCalculation);
-        scheduleDraftRender({ includeUtility: true, includeWorkflowPanels: true });
+        markDirty();
+        scheduleDraftRender({
+          includeUtility: true,
+          includeWorkflowPanels: true,
+          markDirty: false,
+          refillCycleUtilityForm: false,
+        });
       });
     });
     els.rentBatchList.addEventListener("click", handleCycleActionClick);
@@ -329,7 +336,8 @@
     els.lineItems.addEventListener("input", (event) => {
       if (!event.target.closest(".line-item")) return;
       syncDraftFromForm();
-      scheduleDraftRender({ includeOverview: true });
+      markDirty();
+      scheduleDraftRender({ includeOverview: true, markDirty: false });
     });
 
     els.lineItems.addEventListener("click", (event) => {
@@ -406,14 +414,20 @@
 
   function renderDraftNow(options = {}) {
     cancelScheduledDraftRender();
-    const { includeUtility = false, includeOverview = false, includeWorkflowPanels = false } = options;
+    const {
+      includeUtility = false,
+      includeOverview = false,
+      includeWorkflowPanels = false,
+      markDirty: shouldMarkDirty = true,
+      refillCycleUtilityForm = true,
+    } = options;
     const summary = includeOverview || includeWorkflowPanels ? currentCycleSummary() : null;
     if (includeUtility) renderUtilityCalculation(summary);
     renderInvoicePreview();
     renderTotals();
-    if (includeWorkflowPanels) renderWorkflowPanels(summary);
+    if (includeWorkflowPanels) renderWorkflowPanels(summary, { refillCycleUtilityForm });
     if (includeOverview) renderOverview(summary);
-    markDirty();
+    if (shouldMarkDirty) markDirty();
   }
 
   function setInitialView() {
@@ -1041,7 +1055,8 @@
     };
   }
 
-  function renderWorkflowPanels(summary = currentCycleSummary()) {
+  function renderWorkflowPanels(summary = currentCycleSummary(), options = {}) {
+    const { refillCycleUtilityForm = true } = options;
     if (!els.rentBatchPanel || !els.utilityBatchPanel || !els.securityDepositBatchPanel) return;
     els.rentBatchPanel.hidden = currentWorkflow !== "rent";
     els.utilityBatchPanel.hidden = currentWorkflow !== "utility";
@@ -1050,7 +1065,7 @@
     if (currentWorkflow === "rent") {
       renderRentBatchPanel(summary);
     } else if (currentWorkflow === "utility") {
-      fillCycleUtilityCalculationForm(cycleUtilityCalculation);
+      if (refillCycleUtilityForm) fillCycleUtilityCalculationForm(cycleUtilityCalculation);
       renderUtilityBatchPanel(summary);
     } else {
       renderSecurityDepositBatchPanel(summary);

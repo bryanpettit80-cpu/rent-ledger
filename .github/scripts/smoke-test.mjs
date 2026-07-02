@@ -302,6 +302,52 @@ try {
   );
   assert(driveSavedLabelState.invoiceType === "rent", `Expected reopened Drive-saved rent invoice, got ${driveSavedLabelState.invoiceType}.`);
 
+  await page.evaluate(() => {
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient() {
+            return {
+              callback: () => {},
+              requestAccessToken() {
+                this.callback({ error: "test_error" });
+              },
+            };
+          },
+        },
+      },
+    };
+
+    const notes = document.getElementById("invoiceNotes");
+    notes.value = "Edited after Drive save";
+    notes.dispatchEvent(new Event("input", { bubbles: true }));
+    document.getElementById("invoiceForm").requestSubmit();
+  });
+  await page.waitForFunction(
+    (invoiceId) => {
+      const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+      const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
+      return invoice?.notes === "Edited after Drive save" && document.getElementById("saveState")?.textContent?.trim() === "Saved locally";
+    },
+    driveSavedInvoiceId
+  );
+  const editedDriveState = await page.evaluate((invoiceId) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
+    return {
+      drivePdfFileId: invoice?.drivePdfFileId || "",
+      driveSavedAt: invoice?.driveSavedAt || "",
+      invoiceStatus: document.getElementById("invoiceStatus")?.textContent?.trim(),
+      saveState: document.getElementById("saveState")?.textContent?.trim(),
+    };
+  }, driveSavedInvoiceId);
+  assert(!editedDriveState.drivePdfFileId, "Edited invoice should clear stale Drive PDF metadata before an immediate save.");
+  assert(!editedDriveState.driveSavedAt, "Edited invoice should clear stale Drive saved timestamp before an immediate save.");
+  assert(
+    editedDriveState.invoiceStatus === "Saved locally" && editedDriveState.saveState === "Saved locally",
+    `Expected edited Drive invoice to show Saved locally after mocked Drive failure, got ${editedDriveState.invoiceStatus}/${editedDriveState.saveState}.`
+  );
+
   await page.click('[data-view="utility"]');
   await page.waitForFunction(
     () => window.location.hash === "#utility" && document.getElementById("invoiceType")?.value === "utility"
@@ -340,6 +386,15 @@ try {
   assert(!utilityState.oldBatchButtonExists, "Old editor-level utility batch button should be removed.");
   assert(utilityState.batchButton === "Create all utilities", `Expected utility batch button, got ${utilityState.batchButton}.`);
   assert(utilityState.batchSummary.includes("2 utility-billable tenants"), `Unexpected batch summary: ${utilityState.batchSummary}.`);
+
+  await page.evaluate(() => {
+    const input = document.getElementById("cycleUtilityElectric");
+    input.value = "12.50";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(100);
+  const cycleDecimalInput = await page.locator("#cycleUtilityElectric").inputValue();
+  assert(cycleDecimalInput === "12.50", `Cycle utility input should not be normalized while typing, got ${cycleDecimalInput}.`);
 
   await page.evaluate(() => {
     const values = {
