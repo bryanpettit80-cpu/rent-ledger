@@ -4500,7 +4500,9 @@
 
   function cryptoId() {
     if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-    return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const bytes = new Uint32Array(2);
+    window.crypto.getRandomValues(bytes);
+    return `id-${Date.now()}-${Array.from(bytes, (value) => value.toString(16).padStart(8, "0")).join("")}`;
   }
 
   function clone(value) {
