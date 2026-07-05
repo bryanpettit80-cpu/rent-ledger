@@ -62,7 +62,7 @@ To use the app from a phone on the same Wi-Fi network:
 Start-Rent-Ledger-Mobile.cmd
 ```
 
-The launcher starts the app on the local network, opens it on the desktop, prints a phone URL, and copies that URL to the clipboard.
+The launcher starts the app on the local network, opens it on the desktop, prints a phone URL, and copies that URL to the clipboard. It serves a temporary public copy containing only the runtime app files, not the repository folder.
 
 If the phone cannot connect, run `Start-Rent-Ledger-Mobile.cmd` as Administrator once so it can add the Private-network firewall rule. Guest Wi-Fi, VPNs, cellular data, and router client isolation can still block phone-to-PC access.
 
@@ -156,7 +156,7 @@ The Overview screen includes an operations section for day-to-day review:
 Use `Settings` > `Closed Periods` after a billing cycle has been reviewed.
 
 - `Lock current cycle` locks the current rent/security period and the related utility period.
-- Editing, deleting, marking paid, or reopening invoices in a locked period requires confirmation.
+- Creating, editing, deleting, marking paid, or reopening invoices in a locked period requires confirmation.
 - `Unlock current cycle` removes the confirmation guard for the current rent/security and utility periods.
 - Closed periods are stored in the local app state, included in JSON backups, and included when the state is uploaded to Google Drive.
 
@@ -169,6 +169,7 @@ Use `Settings` > `Reports` to download:
 - `Audit CSV` for local activity review.
 
 These exports are generated in the browser from the current local data. They do not require a cloud database.
+Formula-leading text is neutralized during CSV generation so spreadsheet apps open report exports as data instead of formulas.
 
 ## Local Audit Trail
 

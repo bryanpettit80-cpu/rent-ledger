@@ -5,6 +5,7 @@ const files = {
   html: readFileSync("index.html", "utf8"),
   serviceWorker: readFileSync("sw.js", "utf8"),
   readme: readFileSync("README.md", "utf8"),
+  mobileLauncher: readFileSync("Start-Rent-Ledger-Mobile.ps1", "utf8"),
   bumpVersion: readFileSync(".github/scripts/bump-version.mjs", "utf8"),
   smokeTest: readFileSync(".github/scripts/smoke-test.mjs", "utf8"),
 };
@@ -13,6 +14,23 @@ const failures = [];
 
 function assert(condition, message) {
   if (!condition) failures.push(message);
+}
+
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert(start >= 0, `app.js must define ${name}.`);
+  if (start < 0) return "";
+
+  const openBrace = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = openBrace; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+
+  assert(false, `Unable to extract ${name} from app.js.`);
+  return "";
 }
 
 const appVersionMatch = files.app.match(/const APP_VERSION = "([^"]+)"/);
@@ -124,6 +142,10 @@ assert(files.app.includes("function exportTenantStatementCsv"), "app.js must inc
 assert(files.app.includes("function recordAuditEvent"), "app.js must record a local audit trail.");
 assert(files.app.includes("function normalizeClosedPeriods"), "app.js must persist closed billing periods.");
 assert(files.app.includes("function confirmLockedInvoiceChange"), "app.js must guard locked-period invoice changes.");
+assert(
+  files.app.includes("confirmLockedInvoiceChange(invoice, `create this ${invoiceTypeLabel(invoice.invoiceType).toLowerCase()} invoice`)"),
+  "Generated current-cycle invoices must require locked-period confirmation before they are saved."
+);
 assert(files.app.includes("data-copy-invoice-message"), "Saved invoice rows must expose message draft actions.");
 assert(files.app.includes("closedPeriods: normalizeClosedPeriods"), "State normalization must retain closed periods.");
 assert(files.app.includes("auditEvents: normalizeAuditEvents"), "State normalization must retain audit events.");
@@ -133,6 +155,50 @@ assert(
   files.app.includes("markInvoiceDriveSaved(invoice.id, file, { write: false });") &&
     files.app.includes('writeLocalState("Saved invoice to Drive");'),
   "Drive state should be updated after invoice PDF metadata is recorded."
+);
+
+const csvHarness = new Function(`
+${extractFunction(files.app, "neutralizeCsvFormulaCell")}
+${extractFunction(files.app, "csvCell")}
+return { csvCell };
+`)();
+const createCycleInvoiceSource = extractFunction(files.app, "createCycleInvoiceForTenant");
+const lockedConfirmationIndex = createCycleInvoiceSource.indexOf("confirmLockedInvoiceChange");
+const invoicePushIndex = createCycleInvoiceSource.indexOf("state.invoices.push(invoice)");
+assert(
+  lockedConfirmationIndex >= 0 && invoicePushIndex > lockedConfirmationIndex,
+  "Generated invoice creation must confirm locked periods before pushing invoices into state."
+);
+assert(csvHarness.csvCell("=2+2") === "'=2+2", "CSV export must neutralize equals-led formula cells.");
+assert(csvHarness.csvCell("+SUM(1)") === "'+SUM(1)", "CSV export must neutralize plus-led formula cells.");
+assert(csvHarness.csvCell("-10+20") === "'-10+20", "CSV export must neutralize minus-led formula cells.");
+assert(csvHarness.csvCell("@HYPERLINK") === "'@HYPERLINK", "CSV export must neutralize at-led formula cells.");
+assert(csvHarness.csvCell("\t=2+2") === "'\t=2+2", "CSV export must neutralize tab-prefixed formula cells.");
+assert(csvHarness.csvCell("  =2+2") === "'  =2+2", "CSV export must neutralize space-prefixed formula cells.");
+assert(csvHarness.csvCell("\r=2+2") === `"'\r=2+2"`, "CSV export must neutralize carriage-return-prefixed formula cells.");
+assert(csvHarness.csvCell("plain text") === "plain text", "CSV export must preserve plain text.");
+assert(csvHarness.csvCell("needs,quote") === '"needs,quote"', "CSV export must keep standard CSV quoting.");
+
+assert(
+  files.mobileLauncher.includes('$PublishRoot = Join-Path $StateDir "mobile-public"'),
+  "Mobile launcher must publish from a dedicated public app directory."
+);
+assert(
+  files.mobileLauncher.includes("-WorkingDirectory $PublishRoot"),
+  "Mobile launcher must serve the public app directory."
+);
+assert(
+  !files.mobileLauncher.includes("-WorkingDirectory $AppRoot"),
+  "Mobile launcher must not serve the repository root."
+);
+assert(
+  files.mobileLauncher.includes("[switch]$PreparePublicRoot"),
+  "Mobile launcher must support public-root preparation for validation."
+);
+assert(
+  files.mobileLauncher.includes('"index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js"') &&
+    files.mobileLauncher.includes('$RuntimeDirectories = @("assets")'),
+  "Mobile launcher must copy only runtime app files into the public serving directory."
 );
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");

@@ -285,7 +285,17 @@ try {
   assert(appliedRent.lineAmounts[0] === "850", `Apply charge restored wrong rent amount: ${appliedRent.lineAmounts[0]}.`);
   assert(appliedRent.total === "$850.00", `Expected $850.00 total, got ${appliedRent.total}.`);
 
-  page.on("dialog", (dialog) => dialog.accept());
+  const dialogMessages = [];
+  let nextDialogAction = "accept";
+  page.on("dialog", async (dialog) => {
+    dialogMessages.push(dialog.message());
+    if (nextDialogAction === "dismiss") {
+      nextDialogAction = "accept";
+      await dialog.dismiss();
+      return;
+    }
+    await dialog.accept();
+  });
   await page.evaluate(() => {
     window.google = {
       accounts: {
@@ -822,6 +832,66 @@ try {
   assert(
     lockedState.closedPeriodText.includes(expectedRentPeriod) && lockedState.closedPeriodText.includes(expectedUtilityPeriod),
     `Closed period list should render locked periods, got: ${lockedState.closedPeriodText}.`
+  );
+
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    state.invoices = [];
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.evaluate(() => {
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient() {
+            return {
+              callback: () => {},
+              requestAccessToken() {
+                this.callback({ error: "test_error" });
+              },
+            };
+          },
+        },
+      },
+    };
+  });
+  await page.click('[data-view="rent"]');
+  const dialogsBeforeLockedCancel = dialogMessages.length;
+  nextDialogAction = "dismiss";
+  await page.click("#rentBatchList [data-create-rent-invoice]");
+  await page.waitForTimeout(200);
+  const lockedCancelState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      rentInvoices: (state.invoices || []).filter((invoice) => invoice.invoiceType === "rent").length,
+      saveState: document.getElementById("saveState")?.textContent?.trim(),
+    };
+  });
+  const lockedCancelMessages = dialogMessages.slice(dialogsBeforeLockedCancel);
+  assert(
+    lockedCancelMessages.some(
+      (message) => message.includes(`${expectedRentPeriod} is locked`) && message.includes("create this rent invoice")
+    ),
+    `Expected locked-period create confirmation, got: ${lockedCancelMessages.join(" | ")}.`
+  );
+  assert(
+    lockedCancelState.rentInvoices === 0,
+    `Cancelling locked-period invoice creation should leave zero rent invoices, got ${lockedCancelState.rentInvoices}.`
+  );
+
+  const dialogsBeforeLockedAccept = dialogMessages.length;
+  await page.click("#rentBatchList [data-create-rent-invoice]");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices?.filter((invoice) => invoice.invoiceType === "rent").length === 1;
+  });
+  const lockedAcceptMessages = dialogMessages.slice(dialogsBeforeLockedAccept);
+  assert(
+    lockedAcceptMessages.some(
+      (message) => message.includes(`${expectedRentPeriod} is locked`) && message.includes("create this rent invoice")
+    ),
+    `Expected accepted locked-period create confirmation, got: ${lockedAcceptMessages.join(" | ")}.`
   );
 
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";

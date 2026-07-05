@@ -3,8 +3,8 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v33";
-  const APP_COMMIT_DATE = "July 2, 2026";
+  const APP_VERSION = "rent-ledger-v34";
+  const APP_COMMIT_DATE = "July 5, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
@@ -1525,6 +1525,9 @@
     invoice.updatedAt = new Date().toISOString();
 
     if (options.prepare && !options.prepare(invoice, tenant, summary)) return null;
+    if (!confirmLockedInvoiceChange(invoice, `create this ${invoiceTypeLabel(invoice.invoiceType).toLowerCase()} invoice`)) {
+      return null;
+    }
 
     state.invoices.push(invoice);
     return invoice;
@@ -3058,7 +3061,12 @@
 
   function csvCell(value) {
     const text = String(value ?? "");
-    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    const safeText = neutralizeCsvFormulaCell(text);
+    return /[",\r\n]/.test(safeText) ? `"${safeText.replace(/"/g, '""')}"` : safeText;
+  }
+
+  function neutralizeCsvFormulaCell(text) {
+    return /^[=+\-@\t\r\n]/.test(text) || /^[ \f\v]+[=+\-@]/.test(text) ? `'${text}` : text;
   }
 
   function moneyCsvCell(value) {

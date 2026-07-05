@@ -1,9 +1,16 @@
+param(
+    [switch]$PreparePublicRoot
+)
+
 $ErrorActionPreference = "Stop"
 
 $AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $StateDir = Join-Path $env:LOCALAPPDATA "RentLedger"
 $StatePath = Join-Path $StateDir "server.json"
+$PublishRoot = Join-Path $StateDir "mobile-public"
 $FirewallRuleName = "Rent Ledger Mobile 4173-4199"
+$RuntimeFiles = @("index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js")
+$RuntimeDirectories = @("assets")
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 
 function Test-TcpPort {
@@ -59,6 +66,54 @@ function Get-PythonLaunch {
     }
 
     throw "Python was not found. Install Python 3 or open index.html directly without PWA/offline support."
+}
+
+function Get-FullPathKey {
+    param(
+        [string]$Path
+    )
+
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('\', '/'))
+}
+
+function Assert-ChildPath {
+    param(
+        [string]$ParentPath,
+        [string]$ChildPath
+    )
+
+    $parent = Get-FullPathKey -Path $ParentPath
+    $child = Get-FullPathKey -Path $ChildPath
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    if (-not $child.StartsWith("$parent$separator", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to operate outside $ParentPath`: $ChildPath"
+    }
+}
+
+function Sync-PublicAppRoot {
+    New-Item -ItemType Directory -Force -Path $PublishRoot | Out-Null
+    Assert-ChildPath -ParentPath $StateDir -ChildPath $PublishRoot
+
+    Get-ChildItem -LiteralPath $PublishRoot -Force | ForEach-Object {
+        Assert-ChildPath -ParentPath $PublishRoot -ChildPath $_.FullName
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
+
+    foreach ($file in $RuntimeFiles) {
+        $source = Join-Path $AppRoot $file
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Required app file is missing: $file"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $PublishRoot $file) -Force
+    }
+
+    foreach ($directory in $RuntimeDirectories) {
+        $source = Join-Path $AppRoot $directory
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            throw "Required app directory is missing: $directory"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $PublishRoot $directory) -Recurse -Force
+    }
 }
 
 function Get-LanAddress {
@@ -118,7 +173,9 @@ function Stop-RecordedServerIfNeeded {
             return
         }
 
-        if ($serverState.bind -eq "0.0.0.0" -and $serverState.port -and (Test-RentLedgerServer -HostName "127.0.0.1" -Port ([int]$serverState.port))) {
+        $recordedAppRoot = if ($serverState.appRoot) { Get-FullPathKey -Path ([string]$serverState.appRoot) } else { "" }
+        $expectedAppRoot = Get-FullPathKey -Path $PublishRoot
+        if ($serverState.bind -eq "0.0.0.0" -and $serverState.port -and $recordedAppRoot -eq $expectedAppRoot -and (Test-RentLedgerServer -HostName "127.0.0.1" -Port ([int]$serverState.port))) {
             return
         }
 
@@ -128,6 +185,12 @@ function Stop-RecordedServerIfNeeded {
     } catch {
         Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue
     }
+}
+
+Sync-PublicAppRoot
+if ($PreparePublicRoot) {
+    Write-Output $PublishRoot
+    return
 }
 
 $lanAddress = Get-LanAddress
@@ -164,7 +227,7 @@ if (-not $port) {
 
 $pythonLaunch = Get-PythonLaunch
 $serverArgs = @($pythonLaunch.PrefixArgs + @("-m", "http.server", "$port", "--bind", "0.0.0.0"))
-$process = Start-Process -FilePath $pythonLaunch.File -ArgumentList $serverArgs -WorkingDirectory $AppRoot -WindowStyle Hidden -PassThru
+$process = Start-Process -FilePath $pythonLaunch.File -ArgumentList $serverArgs -WorkingDirectory $PublishRoot -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 1
 
 if (-not (Test-RentLedgerServer -HostName "127.0.0.1" -Port $port)) {
@@ -184,7 +247,8 @@ $phoneUrl = "http://$($lanAddress.IPAddress):$port/index.html"
     pid = $process.Id
     port = $port
     bind = "0.0.0.0"
-    appRoot = $AppRoot
+    appRoot = $PublishRoot
+    sourceRoot = $AppRoot
     desktopUrl = $desktopUrl
     phoneUrl = $phoneUrl
     interfaceAlias = $lanAddress.InterfaceAlias
