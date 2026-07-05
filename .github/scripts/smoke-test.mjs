@@ -894,6 +894,8 @@ try {
     `Expected accepted locked-period create confirmation, got: ${lockedAcceptMessages.join(" | ")}.`
   );
 
+  await page.click('[data-view="settings"]');
+
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";
   await page.evaluate(() => {
     window.google = {
