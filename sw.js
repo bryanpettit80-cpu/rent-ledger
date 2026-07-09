@@ -1,10 +1,10 @@
-const CACHE_NAME = "rent-ledger-v34";
+const CACHE_NAME = "rent-ledger-v35";
 const APP_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=rent-ledger-v34",
-  "./app.js?v=rent-ledger-v34",
-  "./manifest.webmanifest?v=rent-ledger-v34",
+  "./styles.css?v=rent-ledger-v35",
+  "./app.js?v=rent-ledger-v35",
+  "./manifest.webmanifest?v=rent-ledger-v35",
   "./assets/rent-ledger-icon.svg",
   "./assets/icon-192.png",
   "./assets/icon-512.png",

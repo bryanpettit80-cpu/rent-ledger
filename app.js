@@ -3,8 +3,8 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v34";
-  const APP_COMMIT_DATE = "July 5, 2026";
+  const APP_VERSION = "rent-ledger-v35";
+  const APP_COMMIT_DATE = "July 9, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
