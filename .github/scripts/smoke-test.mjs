@@ -834,11 +834,54 @@ try {
     `Closed period list should render locked periods, got: ${lockedState.closedPeriodText}.`
   );
 
-  await page.evaluate(() => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    state.invoices = [];
-    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
-  });
+  await page.evaluate(
+    ({ rentPeriod, utilityPeriod }) => {
+      const resetState = {
+        landlord: {
+          name: "Test Landlord",
+          address: "1 Test Way",
+          email: "",
+          phone: "",
+          paymentInstructions: "Pay test.",
+        },
+        tenants: [
+          {
+            id: "andrew",
+            name: "Andrew Buckwalter",
+            unit: "Unit A",
+            address: "",
+            email: "",
+            phone: "",
+            rent: 850,
+            securityDeposit: 350,
+            utilityUnits: 1,
+            active: true,
+            excludeUtilities: false,
+            memo: "",
+          },
+          {
+            id: "brenda",
+            name: "Brenda Carter",
+            unit: "Unit B",
+            address: "",
+            email: "",
+            phone: "",
+            rent: 900,
+            securityDeposit: 900,
+            utilityUnits: 2,
+            active: true,
+            excludeUtilities: false,
+            memo: "",
+          },
+        ],
+        invoices: [],
+        closedPeriods: [{ label: rentPeriod }, { label: utilityPeriod }],
+        auditEvents: [],
+      };
+      localStorage.setItem("rent-ledger:v1", JSON.stringify(resetState));
+    },
+    { rentPeriod: expectedRentPeriod, utilityPeriod: expectedUtilityPeriod }
+  );
   await page.reload({ waitUntil: "networkidle" });
   await page.evaluate(() => {
     window.google = {
