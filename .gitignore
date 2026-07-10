@@ -3,6 +3,9 @@
 *.tmp
 *.bak
 
+# Local Codex app-generated environment metadata
+.codex/environments/
+
 # OS clutter
 Thumbs.db
 .DS_Store
