@@ -819,7 +819,7 @@ try {
       updatedAt: "2000-01-15T12:00:00.000Z",
     });
     // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // codeql[js/clear-text-storage-of-sensitive-data]
+    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
     window.location.hash = "#overview";
   }, { priorPeriod: expectedUtilityPeriod, historicalDepositPeriod: historicalPeriod });
@@ -1206,9 +1206,9 @@ try {
     const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
     state.closedPeriods = [...(state.closedPeriods || []), { label: period, lockedAt: "2000-02-01T00:00:00.000Z" }];
     // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // codeql[js/clear-text-storage-of-sensitive-data]
+    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:closed-periods:v1", JSON.stringify(state.closedPeriods));
-    // codeql[js/clear-text-storage-of-sensitive-data]
+    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
   }, historicalPeriod);
   await page.reload({ waitUntil: "networkidle" });
@@ -1353,7 +1353,7 @@ try {
     const invoiceCount = replacement.invoices?.length || 0;
     const marker = JSON.stringify({ id: "smoke-full-replacement", replacedAt: new Date().toISOString() });
     // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // codeql[js/clear-text-storage-of-sensitive-data]
+    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:v1", JSON.stringify(replacement));
     localStorage.setItem("rent-ledger:state-replacement:v1", marker);
     return { invoiceCount, marker };
@@ -1526,7 +1526,7 @@ try {
       updatedAt: "2000-01-01T00:00:00.000Z",
     });
     // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // codeql[js/clear-text-storage-of-sensitive-data]
+    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
   }, historicalPeriod);
   await page.reload({ waitUntil: "networkidle" });
