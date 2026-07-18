@@ -1,10 +1,12 @@
 (function () {
   const STORAGE_KEY = "rent-ledger:v1";
+  const CLOSED_PERIODS_KEY = "rent-ledger:closed-periods:v1";
+  const STATE_REPLACEMENT_KEY = "rent-ledger:state-replacement:v1";
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v35";
-  const APP_COMMIT_DATE = "July 9, 2026";
+  const APP_VERSION = "rent-ledger-v36";
+  const APP_COMMIT_DATE = "July 18, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
@@ -49,7 +51,16 @@
     auditEvents: [],
   };
 
-  let state = loadState();
+  let state;
+  let observedStateReplacementToken = "";
+  let externalReplacementPending = false;
+  let stateWriteRevision = 0;
+  let draftEditRevision = 0;
+  window.addEventListener("storage", handleStorageChange);
+  const initialStateSnapshot = readConsistentStateSnapshot();
+  state = initialStateSnapshot.state;
+  observedStateReplacementToken = initialStateSnapshot.token;
+  externalReplacementPending = !initialStateSnapshot.stable;
   let appSettings = loadAppSettings();
   let selectedTenantId = firstActiveTenantId() || state.tenants[0]?.id || "";
   let selectedInvoiceId = "";
@@ -242,6 +253,7 @@
     els.startUtilityWorkflow.addEventListener("click", () => setView("utility"));
     els.startSecurityDepositWorkflow.addEventListener("click", () => setView("security"));
     els.reviewInvoicesWorkflow.addEventListener("click", () => setView("invoices"));
+    if (els.billingHealthList) els.billingHealthList.addEventListener("click", handleOperationsActionClick);
     if (els.billingActionList) els.billingActionList.addEventListener("click", handleOperationsActionClick);
     if (els.delinquencyList) els.delinquencyList.addEventListener("click", handleOperationsActionClick);
     if (els.communicationDraftList) els.communicationDraftList.addEventListener("click", handleOperationsActionClick);
@@ -409,6 +421,7 @@
     if (els.exportAuditCsv) els.exportAuditCsv.addEventListener("click", exportAuditCsv);
     if (els.lockCurrentCycle) els.lockCurrentCycle.addEventListener("click", lockCurrentCycle);
     if (els.unlockCurrentCycle) els.unlockCurrentCycle.addEventListener("click", unlockCurrentCycle);
+    if (els.closedPeriodList) els.closedPeriodList.addEventListener("click", handlePeriodLockClick);
   }
 
   function renderAll() {
@@ -640,7 +653,7 @@
     if (type === "security") {
       els.workflowEyebrow.textContent = "Security deposit workflow";
       els.invoiceHeading.textContent = "Security Deposit Invoice";
-      els.workflowCopy.textContent = "Create separate invoices for tenant security deposits.";
+      els.workflowCopy.textContent = "Create one security deposit invoice per tenant, then track payments on that invoice.";
       return;
     }
     els.workflowEyebrow.textContent = "Rent workflow";
@@ -1023,7 +1036,7 @@
       draft = createBlankInvoice(selectedTenantId);
     }
     if (tenantEditorId === id) fillTenantForm(id);
-    saveState(active ? "Activated tenant" : "Deactivated tenant");
+    if (!saveState(active ? "Activated tenant" : "Deactivated tenant")) return;
     renderAll();
     showToast(`${tenant.name} marked ${active ? "active" : "inactive"}.`);
   }
@@ -1136,10 +1149,13 @@
   }
 
   function renderSecurityDepositBatchPanel(summary = currentCycleSummary()) {
-    els.securityDepositBatchHeading.textContent = `${summary.period} Security Deposits`;
-    els.securityDepositBatchCopy.textContent = `${summary.missingSecurityDeposits.length} active tenant${
-      summary.missingSecurityDeposits.length === 1 ? "" : "s"
-    } with security deposits still need invoices due ${formatDate(summary.dueDate)}.`;
+    const missingCount = summary.missingSecurityDeposits.length;
+    els.securityDepositBatchHeading.textContent = "Security Deposit Invoices";
+    els.securityDepositBatchCopy.textContent = missingCount
+      ? `${missingCount} active tenant${
+          missingCount === 1 ? "" : "s"
+        } still need a one-time security deposit invoice. Prior-period invoices count whether open, partially paid, or paid.`
+      : "Every active tenant with a saved deposit already has a one-time security deposit invoice. Payment status does not create another invoice.";
     els.createAllSecurityDepositInvoices.disabled = summary.missingSecurityDeposits.length === 0;
     const tenants = summary.securityDepositTenants;
     els.securityDepositBatchList.innerHTML = tenants.length
@@ -1148,9 +1164,12 @@
   }
 
   function renderSecurityDepositCycleRow(tenant, summary) {
-    const invoice = currentSecurityDepositInvoiceForTenant(tenant.id, summary);
+    const invoice = securityDepositInvoiceForTenant(tenant.id, summary);
     const status = invoice ? invoiceStatusText(invoice) : "Not created";
-    const detail = `${formatMoney(tenant.securityDeposit || 0)} security deposit`;
+    const baseDetail = `${formatMoney(tenant.securityDeposit || 0)} security deposit`;
+    const detail = invoice
+      ? `${baseDetail}; issued for ${invoice.billingPeriod || formatDate(invoice.issueDate)}`
+      : baseDetail;
     return renderCycleRow({
       tenant,
       title: [tenant.name, tenant.unit].filter(Boolean).join(" - "),
@@ -1260,10 +1279,14 @@
     );
   }
 
-  function currentSecurityDepositInvoiceForTenant(tenantId, summary = currentCycleSummary()) {
-    return (
-      summary.securityDepositInvoiceByTenantId?.get(tenantId) ||
-      summary.cycleInvoices.find((invoice) => invoice.tenantId === tenantId && invoiceIncludesSecurityDeposit(invoice))
+  function securityDepositInvoiceForTenant(tenantId, summary = currentCycleSummary(), excludeInvoiceId = "") {
+    const indexedInvoice = summary.securityDepositInvoiceByTenantId?.get(tenantId);
+    if (indexedInvoice && indexedInvoice.id !== excludeInvoiceId) return indexedInvoice;
+    return sortInvoicesByNewest(state.invoices).find(
+      (invoice) =>
+        invoice.id !== excludeInvoiceId &&
+        invoice.tenantId === tenantId &&
+        invoiceIncludesSecurityDeposit(invoice)
     );
   }
 
@@ -1384,10 +1407,23 @@
     if (!invoices.length) return false;
     const { workflow, saveReason, driveActionLabel, driveSuccessMessage, localMessage } = options;
     selectInvoiceForWorkflow(invoices[0], workflow);
-    saveState(saveReason);
+    if (!saveState(saveReason)) return false;
     renderAll();
     setView(workflow, { preserveDraft: true });
+    const uploadDraftRevision = draftEditRevision;
+    const uploadInvoiceId = selectedInvoiceId;
     const driveSaved = await saveInvoiceArtifactsToDrive(invoices, driveActionLabel);
+    if (driveSaved === null) return false;
+    if (draftEditRevision !== uploadDraftRevision || selectedInvoiceId !== uploadInvoiceId) {
+      showToast(
+        driveSaved
+          ? "Created invoices were uploaded; the open form has newer unsaved changes."
+          : "Created invoices were saved locally; the open form has newer unsaved changes."
+      );
+      return driveSaved;
+    }
+    const savedInvoice = state.invoices.find((invoice) => invoice.id === uploadInvoiceId);
+    if (savedInvoice) draft = clone(savedInvoice);
     setSavedStateLabel(driveSaved);
     showToast(driveSaved ? driveSuccessMessage : localMessage);
     return driveSaved;
@@ -1421,12 +1457,14 @@
     const summary = currentCycleSummary();
     const tenants = summary.missingSecurityDeposits;
     if (!tenants.length) {
-      showToast(`${summary.period} security deposit invoices are already complete.`);
+      showToast("Security deposit invoices are already issued for all eligible tenants.");
       return;
     }
 
     const confirmed = window.confirm(
-      `Create ${tenants.length} security deposit invoice${tenants.length === 1 ? "" : "s"} for ${summary.period}?`
+      `Create ${tenants.length} one-time security deposit invoice${
+        tenants.length === 1 ? "" : "s"
+      } using the ${summary.period} billing period?`
     );
     if (!confirmed) return;
 
@@ -1454,8 +1492,8 @@
         invoiceType: "security",
         isEligible: (tenant) => tenant?.active !== false && toNumber(tenant.securityDeposit) > 0,
         invalidMessage: "Choose an active tenant with a security deposit before creating this invoice.",
-        findExisting: currentSecurityDepositInvoiceForTenant,
-        duplicateMessage: "Security deposit invoice already exists.",
+        findExisting: securityDepositInvoiceForTenant,
+        duplicateMessage: "A security deposit invoice already exists for this tenant.",
         billingPeriod: (cycleSummary) => cycleSummary.period,
         lineItems: securityDepositLineItems,
         notes: () => (normalizeInvoiceType(draft.invoiceType) === "security" ? draft.notes || "" : ""),
@@ -1581,7 +1619,7 @@
     );
     els.cycleMissingSecurityDeposits.innerHTML = overviewTenantList(
       summary.missingSecurityDeposits,
-      "Security deposit invoices are complete for active tenants with deposit amounts."
+      "Every active tenant with a saved deposit already has a one-time security deposit invoice."
     );
     els.overviewInvoiceList.innerHTML = overviewInvoiceList(summary.cycleInvoices);
     renderOperationsDashboard(summary);
@@ -1611,14 +1649,17 @@
       if (invoiceIncludesUtility(invoice) && !utilityInvoiceByTenantId.has(invoice.tenantId)) {
         utilityInvoiceByTenantId.set(invoice.tenantId, invoice);
       }
-      if (invoiceIncludesSecurityDeposit(invoice) && !securityDepositInvoiceByTenantId.has(invoice.tenantId)) {
-        securityDepositInvoiceByTenantId.set(invoice.tenantId, invoice);
-      }
       rentInvoiced += invoiceCategoryTotal(invoice, "rent");
       utilityInvoiced += invoiceCategoryTotal(invoice, "utility");
       if (invoice.status !== "paid") {
         openCycleInvoices.push(invoice);
         openBalance += calculateTotal(invoice);
+      }
+    });
+
+    sortInvoicesByNewest(state.invoices).forEach((invoice) => {
+      if (invoiceIncludesSecurityDeposit(invoice) && !securityDepositInvoiceByTenantId.has(invoice.tenantId)) {
+        securityDepositInvoiceByTenantId.set(invoice.tenantId, invoice);
       }
     });
 
@@ -1815,7 +1856,9 @@
       checks.push({
         tone: "warning",
         title: "Possible duplicate invoices",
-        detail: `${duplicateInvoices.length} duplicate tenant/type/period invoice${duplicateInvoices.length === 1 ? "" : "s"} found.`,
+        detail: `${duplicateInvoices.length} repeated invoice${
+          duplicateInvoices.length === 1 ? "" : "s"
+        } found by tenant/type/period or one-time deposit issuance.`,
         actionLabel: "Review invoices",
         actionView: "invoices",
       });
@@ -1823,7 +1866,7 @@
       checks.push({
         tone: "good",
         title: "Duplicate check clear",
-        detail: "Saved invoices do not show repeated tenant/type/period combinations.",
+        detail: "Saved invoices do not repeat tenant/type/period combinations or one-time deposit charges.",
       });
     }
 
@@ -1887,7 +1930,9 @@
       actions.push({
         tone: "warning",
         title: "Create security deposit invoices",
-        detail: `${summary.missingSecurityDeposits.length} tenant${summary.missingSecurityDeposits.length === 1 ? "" : "s"} still need deposit invoices.`,
+        detail: `${summary.missingSecurityDeposits.length} tenant${
+          summary.missingSecurityDeposits.length === 1 ? "" : "s"
+        } still need a one-time deposit invoice.`,
         actionLabel: "Open deposits",
         actionView: "security",
       });
@@ -2054,12 +2099,16 @@
     const seen = new Map();
     const duplicates = [];
     state.invoices.forEach((invoice) => {
-      if (!invoice.tenantId || !invoice.billingPeriod) return;
-      const key = [
-        invoice.tenantId,
-        normalizeInvoiceType(invoice.invoiceType),
-        normalizeCycleLabel(invoice.billingPeriod),
-      ].join("|");
+      if (!invoice.tenantId) return;
+      const isSecurityDeposit = invoiceIncludesSecurityDeposit(invoice);
+      if (!isSecurityDeposit && !invoice.billingPeriod) return;
+      const key = isSecurityDeposit
+        ? [invoice.tenantId, "security-deposit-once"].join("|")
+        : [
+            invoice.tenantId,
+            normalizeInvoiceType(invoice.invoiceType),
+            normalizeCycleLabel(invoice.billingPeriod),
+          ].join("|");
       if (seen.has(key)) {
         duplicates.push(invoice);
       } else {
@@ -2158,7 +2207,20 @@
     const invoice = persistCurrentInvoice("Saved invoice");
     if (!invoice) return;
     renderAll();
+    const uploadDraftRevision = draftEditRevision;
+    const uploadInvoiceId = invoice.id;
     const driveSaved = await saveInvoiceArtifactsToDrive(invoice);
+    if (driveSaved === null) return;
+    if (draftEditRevision !== uploadDraftRevision || selectedInvoiceId !== uploadInvoiceId) {
+      showToast(
+        driveSaved
+          ? "The saved invoice was uploaded; the open form has newer unsaved changes."
+          : "The invoice was saved locally; the open form has newer unsaved changes."
+      );
+      return;
+    }
+    const savedInvoice = state.invoices.find((item) => item.id === uploadInvoiceId);
+    if (savedInvoice) draft = clone(savedInvoice);
     setSavedStateLabel(driveSaved);
     showToast(driveSaved ? "Invoice saved to browser and Drive." : "Invoice saved locally. Drive save skipped.");
   }
@@ -2177,8 +2239,28 @@
     invoice.updatedAt = new Date().toISOString();
 
     const existingIndex = state.invoices.findIndex((item) => item.id === invoice.id);
-    const lockedInvoice = existingIndex >= 0 ? state.invoices[existingIndex] : invoice;
-    if (!confirmLockedInvoiceChange(lockedInvoice, existingIndex >= 0 ? "save changes to this invoice" : "save this invoice")) {
+    const existingInvoice = existingIndex >= 0 ? state.invoices[existingIndex] : null;
+    const keepsExistingDepositIdentity =
+      existingInvoice &&
+      existingInvoice.tenantId === invoice.tenantId &&
+      invoiceIncludesSecurityDeposit(existingInvoice) &&
+      invoiceIncludesSecurityDeposit(invoice);
+    const existingDepositInvoice = invoiceIncludesSecurityDeposit(invoice) && !keepsExistingDepositIdentity
+      ? securityDepositInvoiceForTenant(invoice.tenantId, currentCycleSummary(), invoice.id)
+      : null;
+    if (existingDepositInvoice) {
+      openInvoiceById(existingDepositInvoice.id, {
+        message: "A security deposit invoice already exists for this tenant.",
+      });
+      return null;
+    }
+
+    if (
+      !confirmLockedInvoiceChange(
+        [existingInvoice, invoice],
+        existingIndex >= 0 ? "save changes to this invoice" : "save this invoice"
+      )
+    ) {
       return null;
     }
     if (existingIndex >= 0) {
@@ -2189,7 +2271,7 @@
 
     selectedInvoiceId = invoice.id;
     draft = clone(invoice);
-    saveState(reason);
+    if (!saveState(reason)) return null;
     return invoice;
   }
 
@@ -2232,13 +2314,13 @@
   function openPaymentDialog(invoiceId) {
     const invoice = state.invoices.find((item) => item.id === invoiceId);
     if (!invoice) return;
-    if (!confirmLockedInvoiceChange(invoice, "record a payment")) return;
     const balance = calculateTotal(invoice);
     if (balance <= 0) {
+      if (!confirmLockedInvoiceChange(invoice, "record a payment")) return;
       invoice.status = "paid";
       clearInvoiceDriveMetadata(invoice);
       invoice.updatedAt = new Date().toISOString();
-      saveState("Marked invoice paid");
+      if (!saveState("Marked invoice paid")) return;
       renderAll();
       showToast("Invoice marked paid.");
       return;
@@ -2274,10 +2356,11 @@
     if (!invoice) return;
     const balance = calculateTotal(invoice);
     if (balance <= 0) {
+      if (!confirmLockedInvoiceChange(invoice, "record a payment")) return;
       invoice.status = "paid";
       clearInvoiceDriveMetadata(invoice);
       invoice.updatedAt = new Date().toISOString();
-      saveState("Marked invoice paid");
+      if (!saveState("Marked invoice paid")) return;
       closePaymentDialog();
       renderAll();
       showToast("Invoice marked paid.");
@@ -2296,6 +2379,7 @@
       );
       return;
     }
+    if (!confirmLockedInvoiceChange(invoice, "record a payment")) return;
 
     invoice.payments = normalizeInvoicePayments(invoice.payments).concat({
       id: cryptoId(),
@@ -2309,7 +2393,7 @@
     if (selectedInvoiceId === invoiceId) {
       draft = clone(invoice);
     }
-    saveState(invoice.status === "paid" ? "Marked invoice paid" : "Recorded partial payment");
+    if (!saveState(invoice.status === "paid" ? "Marked invoice paid" : "Recorded partial payment")) return;
     closePaymentDialog();
     renderAll();
     showToast(invoice.status === "paid" ? "Invoice marked paid." : "Partial payment recorded.");
@@ -2340,7 +2424,7 @@
     if (selectedInvoiceId === invoiceId) {
       draft = clone(invoice);
     }
-    saveState("Reopened invoice");
+    if (!saveState("Reopened invoice")) return;
     renderAll();
     showToast("Invoice reopened.");
   }
@@ -2369,11 +2453,15 @@
     if (deleteButton) {
       const id = deleteButton.dataset.deleteInvoice;
       const invoice = state.invoices.find((item) => item.id === id);
+      if (!invoice) return;
+      const deleteMessage = invoiceIncludesSecurityDeposit(invoice)
+        ? "Delete this security deposit invoice? This removes one issuance record and may make the tenant's deposit appear missing again."
+        : "Delete this saved invoice?";
+      if (!window.confirm(deleteMessage)) return;
       if (!confirmLockedInvoiceChange(invoice, "delete this invoice")) return;
-      if (!window.confirm("Delete this saved invoice?")) return;
       state.invoices = state.invoices.filter((invoice) => invoice.id !== id);
       if (selectedInvoiceId === id) startNewInvoice();
-      saveState("Deleted invoice");
+      if (!saveState("Deleted invoice")) return;
       renderAll();
       showToast("Invoice deleted.");
     }
@@ -2381,29 +2469,55 @@
 
   function clearPaidInvoices() {
     const paidInvoices = state.invoices.filter((invoice) => invoice.status === "paid");
-    const paidCount = paidInvoices.length;
-    if (!paidCount) {
+    const retainedDepositInvoices = paidInvoices.filter(invoiceIncludesSecurityDeposit);
+    const deletablePaidInvoices = paidInvoices.filter((invoice) => !invoiceIncludesSecurityDeposit(invoice));
+    const paidCount = deletablePaidInvoices.length;
+    if (!paidInvoices.length) {
       showToast("No paid invoices to delete.");
       return;
     }
-    const lockedPaidCount = paidInvoices.filter(invoicePeriodLocked).length;
+    if (!paidCount) {
+      showToast("Paid security deposit invoices are retained as one-time issuance records.");
+      return;
+    }
+    const retainedMessage = retainedDepositInvoices.length
+      ? ` ${retainedDepositInvoices.length} paid security deposit invoice${
+          retainedDepositInvoices.length === 1 ? "" : "s"
+        } will be retained as one-time issuance records.`
+      : "";
     if (
-      lockedPaidCount &&
       !window.confirm(
-        `${lockedPaidCount} paid invoice${lockedPaidCount === 1 ? "" : "s"} are in locked periods. Continue?`
+        `Delete ${paidCount} paid non-deposit invoice${paidCount === 1 ? "" : "s"}? This cannot be undone.${retainedMessage}`
       )
     ) {
       return;
     }
-    if (!window.confirm(`Delete ${paidCount} paid invoice${paidCount === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    if (!confirmLockedInvoiceChange(deletablePaidInvoices, "delete these paid invoices")) return;
 
-    state.invoices = state.invoices.filter((invoice) => invoice.status !== "paid");
+    const deletedIds = new Set(deletablePaidInvoices.map((invoice) => invoice.id));
+    state.invoices = state.invoices.filter((invoice) => !deletedIds.has(invoice.id));
     if (selectedInvoiceId && !state.invoices.some((invoice) => invoice.id === selectedInvoiceId)) {
       startNewInvoice();
     }
-    saveState("Deleted paid invoices");
+    if (
+      !saveState(
+        `Deleted ${paidCount} paid non-deposit invoice${paidCount === 1 ? "" : "s"}; retained ${
+          retainedDepositInvoices.length
+        } paid security deposit invoice${retainedDepositInvoices.length === 1 ? "" : "s"}`
+      )
+    ) {
+      return;
+    }
     renderAll();
-    showToast(`${paidCount} paid invoice${paidCount === 1 ? "" : "s"} deleted.`);
+    showToast(
+      `${paidCount} paid non-deposit invoice${paidCount === 1 ? "" : "s"} deleted.${
+        retainedDepositInvoices.length
+          ? ` ${retainedDepositInvoices.length} paid security deposit invoice${
+              retainedDepositInvoices.length === 1 ? " was" : "s were"
+            } retained.`
+          : ""
+      }`
+    );
   }
 
   function saveTenant(event) {
@@ -2451,7 +2565,7 @@
         draft = createBlankInvoice(selectedTenantId);
       }
     }
-    saveState("Saved tenant");
+    if (!saveState("Saved tenant")) return;
     fillTenantForm(id);
     renderAll();
     showToast("Tenant saved.");
@@ -2502,7 +2616,7 @@
     if (selectedTenantId === id) selectedTenantId = firstActiveTenantId() || "";
     tenantEditorId = selectedTenantId;
     if (draft.tenantId === id) draft = createBlankInvoice(selectedTenantId);
-    saveState("Deleted tenant");
+    if (!saveState("Deleted tenant")) return;
     fillTenantForm(selectedTenantId);
     renderAll();
     showToast("Tenant deleted.");
@@ -2525,7 +2639,7 @@
       phone: formatPhoneNumber(els.landlordPhone.value),
       paymentInstructions: els.paymentInstructions.value.trim(),
     };
-    saveState("Saved settings");
+    if (!saveState("Saved settings")) return;
     renderInvoicePreview();
     showToast("Settings saved.");
   }
@@ -2538,6 +2652,7 @@
 
   function saveDriveSettings(showMessage) {
     const previousClientId = appSettings.googleClientId;
+    const previousAutoSync = Boolean(appSettings.driveAutoSync);
     const nextClientId = cleanGoogleClientId(els.googleClientId.value) || DEFAULT_GOOGLE_CLIENT_ID;
     els.googleClientId.value = nextClientId;
     appSettings = {
@@ -2555,8 +2670,13 @@
     }
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
     renderDriveStatus();
-    if (!appSettings.driveAutoSync) clearTimeout(driveSyncTimer);
-    if (appSettings.driveAutoSync && driveAccessToken) queueDriveSync("Enabled Drive auto-sync");
+    if (!appSettings.driveAutoSync) {
+      clearTimeout(driveSyncTimer);
+      driveSyncTimer = 0;
+    }
+    if (!previousAutoSync && appSettings.driveAutoSync && driveAccessToken) {
+      queueDriveSync("Enabled Drive auto-sync");
+    }
     if (showMessage) showToast("Drive settings saved.");
   }
 
@@ -2837,6 +2957,7 @@
   }
 
   function markDirty() {
+    draftEditRevision += 1;
     if (selectedInvoiceId) clearInvoiceDriveMetadata(draft);
     els.saveState.textContent = selectedInvoiceId ? "Unsaved changes" : "Draft";
     if (draft.status !== "paid") {
@@ -2878,30 +2999,179 @@
     invoice.driveModifiedTime = String(file?.modifiedTime || "");
     invoice.driveSavedAt = new Date().toISOString();
     invoice.updatedAt = new Date().toISOString();
-    if (selectedInvoiceId === invoice.id) {
+    if (selectedInvoiceId === invoice.id && options.updateDraft !== false) {
       draft = clone(invoice);
     }
     if (options.write !== false) {
-      writeLocalState("Saved invoice to Drive");
+      if (!writeLocalState("Saved invoice to Drive")) return null;
     }
     return invoice;
   }
 
+  function invoiceArtifactFingerprint(invoice) {
+    if (!invoice) return "";
+    const pdfInvoice = clone(invoice);
+    delete pdfInvoice.drivePdfFileId;
+    delete pdfInvoice.drivePdfFileName;
+    delete pdfInvoice.driveSavedAt;
+    delete pdfInvoice.driveModifiedTime;
+    delete pdfInvoice.updatedAt;
+    return JSON.stringify({
+      invoice: pdfInvoice,
+      tenant: getTenant(invoice.tenantId) || null,
+      landlord: state.landlord,
+    });
+  }
+
   function loadState() {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (!stored) return clone(defaultState);
-      const parsed = JSON.parse(stored);
-      return normalizeState({
-        landlord: { ...defaultState.landlord, ...(parsed.landlord || {}) },
-        tenants: Array.isArray(parsed.tenants) ? parsed.tenants : clone(defaultState.tenants),
-        invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-        closedPeriods: Array.isArray(parsed.closedPeriods) ? parsed.closedPeriods : [],
-        auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
-      });
+      const loadedState = stateFromStorageValue(localStorage.getItem(STORAGE_KEY));
+      loadedState.closedPeriods = readCanonicalClosedPeriods(loadedState.closedPeriods);
+      return loadedState;
     } catch (error) {
       console.warn("Unable to load saved Rent Ledger data.", error);
-      return clone(defaultState);
+      const fallbackState = clone(defaultState);
+      fallbackState.closedPeriods = readCanonicalClosedPeriods(fallbackState.closedPeriods);
+      return fallbackState;
+    }
+  }
+
+  function stateFromStorageValue(stored) {
+    if (!stored) return clone(defaultState);
+    const parsed = JSON.parse(stored);
+    return normalizeState({
+      landlord: { ...defaultState.landlord, ...(parsed.landlord || {}) },
+      tenants: Array.isArray(parsed.tenants) ? parsed.tenants : clone(defaultState.tenants),
+      invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
+      closedPeriods: Array.isArray(parsed.closedPeriods) ? parsed.closedPeriods : [],
+      auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
+    });
+  }
+
+  function readCanonicalClosedPeriods(fallback = [], options = {}) {
+    try {
+      const stored = localStorage.getItem(CLOSED_PERIODS_KEY);
+      const closedPeriods =
+        stored === null
+          ? normalizeClosedPeriods(fallback)
+          : normalizeClosedPeriods(JSON.parse(stored));
+      if (stored === null && options.initialize !== false) {
+        localStorage.setItem(CLOSED_PERIODS_KEY, JSON.stringify(closedPeriods));
+      }
+      return closedPeriods;
+    } catch (error) {
+      console.warn("Unable to load canonical closed periods.", error);
+      const closedPeriods = normalizeClosedPeriods(fallback);
+      try {
+        localStorage.setItem(CLOSED_PERIODS_KEY, JSON.stringify(closedPeriods));
+      } catch (repairError) {
+        console.warn("Unable to repair canonical closed periods.", repairError);
+      }
+      return closedPeriods;
+    }
+  }
+
+  function persistCanonicalClosedPeriods(periods = state.closedPeriods) {
+    const closedPeriods = normalizeClosedPeriods(periods);
+    localStorage.setItem(CLOSED_PERIODS_KEY, JSON.stringify(closedPeriods));
+    return closedPeriods;
+  }
+
+  function refreshCanonicalClosedPeriods() {
+    state.closedPeriods = readCanonicalClosedPeriods(state.closedPeriods);
+    return state.closedPeriods;
+  }
+
+  function readStateReplacementToken() {
+    try {
+      return localStorage.getItem(STATE_REPLACEMENT_KEY) || "";
+    } catch (error) {
+      console.warn("Unable to read the state replacement marker.", error);
+      return "";
+    }
+  }
+
+  function stateReplacementIsPending() {
+    return externalReplacementPending || readStateReplacementToken() !== observedStateReplacementToken;
+  }
+
+  function readConsistentStateSnapshot() {
+    let lastState = null;
+    let lastToken = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const tokenBefore = readStateReplacementToken();
+      const loadedState = loadState();
+      const tokenAfter = readStateReplacementToken();
+      lastState = loadedState;
+      lastToken = tokenAfter;
+      if (tokenBefore === tokenAfter) {
+        return { state: loadedState, token: tokenAfter, stable: true };
+      }
+    }
+    return { state: lastState || loadState(), token: lastToken, stable: false };
+  }
+
+  function publishStateReplacement(reason) {
+    const token = JSON.stringify({
+      id: cryptoId(),
+      replacedAt: new Date().toISOString(),
+      reason: String(reason || "Replaced local data"),
+    });
+    localStorage.setItem(STATE_REPLACEMENT_KEY, token);
+    observedStateReplacementToken = token;
+    externalReplacementPending = false;
+  }
+
+  function reloadAfterExternalStateReplacement() {
+    const replacementSnapshot = readConsistentStateSnapshot();
+    if (!replacementSnapshot.stable) {
+      externalReplacementPending = true;
+      showToast("Data is still being replaced in another tab. Save was stopped; try again in a moment.");
+      return false;
+    }
+
+    state = replacementSnapshot.state;
+    selectedTenantId = firstActiveTenantId() || state.tenants[0]?.id || "";
+    selectedInvoiceId = "";
+    tenantEditorId = selectedTenantId;
+    draft = createBlankInvoice(selectedTenantId, currentWorkflow);
+    cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+    if (paymentDialogInvoiceId) closePaymentDialog();
+    observedStateReplacementToken = replacementSnapshot.token;
+    externalReplacementPending = false;
+    fillLandlordForm();
+    fillTenantForm(selectedTenantId);
+    renderAll();
+    showToast("Data was replaced in another tab. The current saved state was reloaded instead of overwriting it.");
+    return true;
+  }
+
+  function handleStorageChange(event) {
+    if (event.storageArea && event.storageArea !== localStorage) return;
+    if (event.oldValue === event.newValue) return;
+
+    if (event.key === STATE_REPLACEMENT_KEY) {
+      if (event.newValue === observedStateReplacementToken) return;
+      externalReplacementPending = true;
+      if (els.toast) {
+        showToast("Data was replaced in another Rent Ledger tab. Open forms are preserved, but reload before saving.");
+      }
+      return;
+    }
+
+    if (event.key !== CLOSED_PERIODS_KEY) return;
+
+    try {
+      refreshCanonicalClosedPeriods();
+      stateWriteRevision += 1;
+      const summary = currentCycleSummary();
+      renderPeriodLocks(summary);
+      renderOverview(summary);
+      if (els.toast) {
+        showToast("Period safeguards updated from another Rent Ledger tab. Open forms were left unchanged.");
+      }
+    } catch (error) {
+      console.warn("Unable to apply closed periods from another tab.", error);
     }
   }
 
@@ -2936,21 +3206,70 @@
     }
   }
 
-  function saveState(reason = "Saved data") {
-    writeLocalState(reason);
+  function saveState(reason = "Saved data", options = {}) {
+    if (!options.stateReplacement && stateReplacementIsPending()) {
+      reloadAfterExternalStateReplacement();
+      return false;
+    }
+    if (!writeLocalState(reason, options)) return false;
     queueDriveSync(reason);
+    return true;
   }
 
   function writeLocalState(reason = "Saved data", options = {}) {
+    if (!options.stateReplacement && stateReplacementIsPending()) {
+      reloadAfterExternalStateReplacement();
+      return false;
+    }
+    state.closedPeriods = options.persistClosedPeriods
+      ? persistCanonicalClosedPeriods(state.closedPeriods)
+      : refreshCanonicalClosedPeriods();
+    if (!options.stateReplacement) mergeLatestAuditEvents();
     if (options.audit !== false) recordAuditEvent(reason);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    stateWriteRevision += 1;
+    if (options.stateReplacement) publishStateReplacement(reason);
     recordLocalBackup(reason, state);
     renderBackupStatus();
     renderAuditTrail();
     renderPeriodLocks();
+    return true;
+  }
+
+  function mergeLatestAuditEvents() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      const latestEvents = Array.isArray(stored.auditEvents) ? stored.auditEvents : [];
+      const combined = [...latestEvents, ...state.auditEvents];
+      const seenIds = new Set();
+      const seenDetails = new Set();
+      const merged = [];
+
+      combined.forEach((event) => {
+        const id = String(event?.id || "").trim();
+        const detailKey = [event?.createdAt || event?.timestamp || "", event?.type || "state", event?.message || event?.reason || ""]
+          .map((value) => String(value))
+          .join("|");
+        if (id ? seenIds.has(id) : seenDetails.has(detailKey)) return;
+        if (id) {
+          seenIds.add(id);
+        } else {
+          seenDetails.add(detailKey);
+        }
+        merged.push(event);
+      });
+
+      merged.sort((a, b) =>
+        String(b?.createdAt || b?.timestamp || "").localeCompare(String(a?.createdAt || a?.timestamp || ""))
+      );
+      state.auditEvents = normalizeAuditEvents(merged);
+    } catch (error) {
+      console.warn("Unable to merge the latest audit trail before saving.", error);
+    }
   }
 
   function exportBackup() {
+    refreshCanonicalClosedPeriods();
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -3153,7 +3472,10 @@
           <article class="operations-item is-info">
             <div>
               <strong>${escapeHtml(period.label)}</strong>
-              <p>Locked ${escapeHtml(formatDateTime(period.lockedAt) || "locally")}.</p>
+              <p>Locked ${escapeHtml(formatDateTime(period.lockedAt) || "locally")}. Invoice changes require an extra confirmation.</p>
+            </div>
+            <div class="card-actions">
+              <button class="small-button" data-unlock-period="${escapeAttr(period.normalized)}" type="button">Unlock this period</button>
             </div>
           </article>`
       )
@@ -3161,6 +3483,7 @@
   }
 
   function lockCurrentCycle() {
+    refreshCanonicalClosedPeriods();
     const summary = currentCycleSummary();
     const periods = cycleLockPeriods(summary);
     const now = new Date().toISOString();
@@ -3182,12 +3505,19 @@
       return;
     }
 
-    saveState("Locked current cycle");
+    if (
+      !saveState(`Locked billing period${added.length === 1 ? "" : "s"} ${added.join(" and ")}`, {
+        persistClosedPeriods: true,
+      })
+    ) {
+      return;
+    }
     renderAll();
     showToast(`Locked ${added.join(" and ")}.`);
   }
 
   function unlockCurrentCycle() {
+    refreshCanonicalClosedPeriods();
     const summary = currentCycleSummary();
     const lockedKeys = new Set(
       cycleLockPeriods(summary)
@@ -3199,11 +3529,71 @@
       showToast("Current cycle is not locked.");
       return;
     }
-    if (!window.confirm(`Unlock ${lockedPeriods.map((period) => period.label).join(" and ")}?`)) return;
+    const labels = lockedPeriods.map((period) => period.label).join(" and ");
+    if (
+      !window.confirm(
+        `Unlock the current-cycle safeguards for ${labels}? Invoice changes in these periods will no longer require the extra confirmation.`
+      )
+    ) {
+      return;
+    }
+    refreshCanonicalClosedPeriods();
+    const removedPeriods = normalizeClosedPeriods(state.closedPeriods).filter((period) =>
+      lockedKeys.has(period.normalized)
+    );
+    if (!removedPeriods.length) {
+      renderAll();
+      showToast("Current cycle is already unlocked.");
+      return;
+    }
     state.closedPeriods = normalizeClosedPeriods(state.closedPeriods).filter((period) => !lockedKeys.has(period.normalized));
-    saveState("Unlocked current cycle");
+    if (
+      !saveState(
+        `Unlocked billing period${removedPeriods.length === 1 ? "" : "s"} ${removedPeriods
+          .map((period) => period.label)
+          .join(" and ")}`,
+        { persistClosedPeriods: true }
+      )
+    ) {
+      return;
+    }
     renderAll();
     showToast("Current cycle unlocked.");
+  }
+
+  function handlePeriodLockClick(event) {
+    const unlockButton = event.target.closest("[data-unlock-period]");
+    if (!unlockButton) return;
+    unlockPeriod(unlockButton.dataset.unlockPeriod);
+  }
+
+  function unlockPeriod(normalizedPeriod) {
+    refreshCanonicalClosedPeriods();
+    const lockKey = periodLockKey(normalizedPeriod);
+    const lockedPeriod = normalizeClosedPeriods(state.closedPeriods).find((period) => period.normalized === lockKey);
+    if (!lockedPeriod) {
+      showToast("That billing period is already unlocked.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Unlock ${lockedPeriod.label}? Invoice changes in this period will no longer require the extra confirmation.`
+      )
+    ) {
+      return;
+    }
+    refreshCanonicalClosedPeriods();
+    if (!periodIsLocked(lockedPeriod.label)) {
+      renderAll();
+      showToast(`${lockedPeriod.label} is already unlocked.`);
+      return;
+    }
+    state.closedPeriods = normalizeClosedPeriods(state.closedPeriods).filter(
+      (period) => period.normalized !== lockedPeriod.normalized
+    );
+    if (!saveState(`Unlocked billing period ${lockedPeriod.label}`, { persistClosedPeriods: true })) return;
+    renderAll();
+    showToast(`${lockedPeriod.label} unlocked.`);
   }
 
   function cycleLockPeriods(summary = currentCycleSummary()) {
@@ -3230,10 +3620,26 @@
     return periodIsLocked(invoice?.billingPeriod);
   }
 
-  function confirmLockedInvoiceChange(invoice, actionLabel) {
-    if (!invoicePeriodLocked(invoice)) return true;
-    const period = invoice?.billingPeriod || "this period";
-    return window.confirm(`${period} is locked. Continue to ${actionLabel}?`);
+  function lockedInvoicePeriods(invoices) {
+    const lockedPeriods = new Map();
+    (Array.isArray(invoices) ? invoices : [invoices]).forEach((invoice) => {
+      const label = String(invoice?.billingPeriod || "").trim();
+      const normalized = periodLockKey(label);
+      if (!normalized || !periodIsLocked(label) || lockedPeriods.has(normalized)) return;
+      lockedPeriods.set(normalized, label);
+    });
+    return [...lockedPeriods.values()];
+  }
+
+  function confirmLockedInvoiceChange(invoices, actionLabel) {
+    refreshCanonicalClosedPeriods();
+    const periods = lockedInvoicePeriods(invoices);
+    if (!periods.length) return true;
+    const lockMessage =
+      periods.length === 1 ? `${periods[0]} is locked.` : `${periods.join(" and ")} are locked.`;
+    return window.confirm(
+      `${lockMessage} This is a workflow safeguard, so the change is still allowed after confirmation. Continue to ${actionLabel}?`
+    );
   }
 
   async function connectDrive() {
@@ -3306,6 +3712,7 @@
     }
     clearTimeout(driveSyncTimer);
     driveSyncTimer = window.setTimeout(() => {
+      driveSyncTimer = 0;
       saveStateToDrive(reason).catch((error) => {
         console.error(error);
         renderDriveStatus("Drive sync failed. Local save kept.");
@@ -3319,7 +3726,7 @@
 
     try {
       renderDriveStatus("Uploading app data to Drive...");
-      await uploadDriveState();
+      if (!(await uploadDriveState())) return;
       renderDriveStatus(`${reason}: app data uploaded to Drive.`);
       showToast("Saved to Google Drive.");
     } catch (error) {
@@ -3327,7 +3734,7 @@
         appSettings.driveStateFileId = "";
         localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
         try {
-          await uploadDriveState();
+          if (!(await uploadDriveState())) return;
           renderDriveStatus(`${reason}: app data uploaded to Drive.`);
           showToast("Saved to Google Drive.");
         } catch (retryError) {
@@ -3345,6 +3752,8 @@
 
   async function saveInvoiceArtifactsToDrive(invoices, actionLabel = "saving invoice") {
     const invoiceList = Array.isArray(invoices) ? invoices : [invoices].filter(Boolean);
+    const startingDraftRevision = draftEditRevision;
+    const startingSelectedInvoiceId = selectedInvoiceId;
     saveDriveSettings(false);
     if (!invoiceList.length) return false;
     if (!appSettings.googleClientId) {
@@ -3358,21 +3767,95 @@
 
     try {
       if (!(await ensureDriveAccess(actionLabel))) return false;
-      const plural = invoiceList.length === 1 ? "" : "s";
-      renderDriveStatus(`Uploading app data and invoice PDF${plural} to Drive...`);
-      await uploadDriveState();
-      for (const invoice of invoiceList) {
-        const file = await uploadInvoicePdf(invoice, createInvoicePdfBlob(invoice));
-        markInvoiceDriveSaved(invoice.id, file, { write: false });
-      }
-      writeLocalState(invoiceList.length === 1 ? "Saved invoice to Drive" : "Saved invoices to Drive");
-      await uploadDriveState();
-      renderDriveStatus(
-        invoiceList.length === 1
-          ? `Saved to Drive: ${invoiceList[0].drivePdfFileName || "invoice PDF"}.`
-          : `Saved ${invoiceList.length} invoice PDFs to Drive.`
-      );
-      return true;
+      const saveArtifacts = async () => {
+        if (!prepareCurrentStateForDriveUpload()) return null;
+        const plural = invoiceList.length === 1 ? "" : "s";
+        renderDriveStatus(`Uploading app data and invoice PDF${plural} to Drive...`);
+        if (!(await uploadDriveStateWithCurrentData())) return null;
+        const transactionRevision = stateWriteRevision;
+        const uploadedArtifacts = [];
+        for (const invoice of invoiceList) {
+          if (!prepareCurrentStateForDriveUpload()) return null;
+          if (stateWriteRevision !== transactionRevision) {
+            renderDriveStatus("Drive PDF upload stopped because saved data changed during the batch.");
+            return null;
+          }
+          const currentInvoice = state.invoices.find((item) => item.id === invoice.id);
+          if (!currentInvoice) {
+            renderDriveStatus("Drive PDF upload stopped because the invoice is no longer in the current data.");
+            return null;
+          }
+          const fingerprint = invoiceArtifactFingerprint(currentInvoice);
+          const file = await uploadInvoicePdf(currentInvoice, createInvoicePdfBlob(currentInvoice));
+          if (!prepareCurrentStateForDriveUpload()) return null;
+          const latestInvoice = state.invoices.find((item) => item.id === invoice.id);
+          if (
+            stateWriteRevision !== transactionRevision ||
+            !latestInvoice ||
+            invoiceArtifactFingerprint(latestInvoice) !== fingerprint
+          ) {
+            renderDriveStatus("Drive PDF upload stopped because invoice data changed while the PDF was uploading.");
+            return null;
+          }
+          uploadedArtifacts.push({ id: latestInvoice.id, file, fingerprint });
+        }
+        if (
+          stateWriteRevision !== transactionRevision ||
+          uploadedArtifacts.some((artifact) => {
+            const invoice = state.invoices.find((item) => item.id === artifact.id);
+            return !invoice || invoiceArtifactFingerprint(invoice) !== artifact.fingerprint;
+          })
+        ) {
+          renderDriveStatus("Drive PDF upload stopped because saved data changed during the batch.");
+          return null;
+        }
+        uploadedArtifacts.forEach((artifact) =>
+          markInvoiceDriveSaved(artifact.id, artifact.file, { write: false, updateDraft: false })
+        );
+        if (!writeLocalState(invoiceList.length === 1 ? "Saved invoice to Drive" : "Saved invoices to Drive")) {
+          renderDriveStatus("Drive PDF upload finished, but newer replacement data was kept locally.");
+          return null;
+        }
+        const finalStateSaved = await uploadDriveStateWithCurrentData();
+        const staleArtifacts = uploadedArtifacts.filter((artifact) => {
+          const invoice = state.invoices.find((item) => item.id === artifact.id);
+          return !invoice || invoiceArtifactFingerprint(invoice) !== artifact.fingerprint;
+        });
+        if (staleArtifacts.length) {
+          let clearedMetadata = false;
+          staleArtifacts.forEach((artifact) => {
+            const invoice = state.invoices.find((item) => item.id === artifact.id);
+            if (!invoice || String(invoice.drivePdfFileId || "") !== String(artifact.file?.id || "")) return;
+            clearInvoiceDriveMetadata(invoice);
+            if (
+              selectedInvoiceId === invoice.id &&
+              selectedInvoiceId === startingSelectedInvoiceId &&
+              draftEditRevision === startingDraftRevision
+            ) {
+              draft = clone(invoice);
+            }
+            clearedMetadata = true;
+          });
+          if (clearedMetadata) {
+            if (!writeLocalState("Cleared stale Drive PDF metadata after a concurrent change")) return null;
+            await uploadDriveStateWithCurrentData();
+          }
+          renderDriveStatus("Drive PDF upload stopped because invoice data changed before the batch finished.");
+          return null;
+        }
+        if (!finalStateSaved) return null;
+        const savedInvoice = invoiceList.length === 1
+          ? state.invoices.find((invoice) => invoice.id === invoiceList[0].id)
+          : null;
+        renderDriveStatus(
+          invoiceList.length === 1
+            ? `Saved to Drive: ${savedInvoice?.drivePdfFileName || "invoice PDF"}.`
+            : `Saved ${invoiceList.length} invoice PDFs to Drive.`
+        );
+        return true;
+      };
+
+      return await withDriveStateLock(saveArtifacts);
     } catch (error) {
       console.error(error);
       renderDriveStatus(
@@ -3390,41 +3873,61 @@
       return;
     }
 
+    clearTimeout(driveSyncTimer);
+    driveSyncTimer = 0;
     if (!(await ensureDriveAccess("loading"))) return;
 
-    try {
-      renderDriveStatus("Loading from Google Drive...");
-      const folderId = await ensureDriveFolder();
-      const file = await findDriveFile(DRIVE_STATE_FILE_NAME, "application/json", folderId);
-      if (!file) {
-        renderDriveStatus("No Drive state file found.");
-        showToast("No Drive backup found.");
-        return;
-      }
+    const load = async () => {
+      try {
+        renderDriveStatus("Loading from Google Drive...");
+        const folderId = await ensureDriveFolder();
+        const file = await findDriveFile(DRIVE_STATE_FILE_NAME, "application/json", folderId);
+        if (!file) {
+          renderDriveStatus("No Drive state file found.");
+          showToast("No Drive backup found.");
+          return;
+        }
 
-      appSettings.driveStateFileId = file.id;
-      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
-      const imported = await driveApi(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
-      recordLocalBackup("Before Drive load", state);
-      state = normalizeState(imported);
-      selectedTenantId = firstActiveTenantId() || "";
-      selectedInvoiceId = "";
-      draft = createBlankInvoice(selectedTenantId);
-      cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
-      saveState("Loaded from Google Drive");
-      fillLandlordForm();
-      fillTenantForm(selectedTenantId);
-      renderAll();
-      renderDriveStatus("Loaded from Google Drive.");
-      showToast("Loaded from Google Drive.");
-    } catch (error) {
-      console.error(error);
-      renderDriveStatus("Drive load failed.");
-      showToast("Google Drive load failed.");
-    }
+        appSettings.driveStateFileId = file.id;
+        localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+        const imported = await driveApi(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+        refreshCanonicalClosedPeriods();
+        recordLocalBackup("Before Drive load", state);
+        state = normalizeState(imported);
+        selectedTenantId = firstActiveTenantId() || "";
+        selectedInvoiceId = "";
+        draft = createBlankInvoice(selectedTenantId);
+        cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+        saveState("Loaded from Google Drive", { persistClosedPeriods: true, stateReplacement: true });
+        fillLandlordForm();
+        fillTenantForm(selectedTenantId);
+        renderAll();
+        renderDriveStatus("Loaded from Google Drive.");
+        showToast("Loaded from Google Drive.");
+      } catch (error) {
+        console.error(error);
+        renderDriveStatus("Drive load failed.");
+        showToast("Google Drive load failed.");
+      }
+    };
+
+    await withDriveStateLock(load);
   }
 
   async function uploadDriveState() {
+    const upload = () => uploadDriveStateWithCurrentData();
+    return withDriveStateLock(upload);
+  }
+
+  async function withDriveStateLock(callback) {
+    if (navigator.locks?.request) {
+      return navigator.locks.request("rent-ledger-drive-state", callback);
+    }
+    return callback();
+  }
+
+  async function uploadDriveStateWithCurrentData(replacementRetry = 0) {
+    if (!prepareCurrentStateForDriveUpload()) return false;
     const folderId = await ensureDriveFolder();
     let fileId = appSettings.driveStateFileId;
     if (!fileId) {
@@ -3432,6 +3935,9 @@
       fileId = existing?.id || "";
     }
 
+    if (!prepareCurrentStateForDriveUpload()) return false;
+    refreshCanonicalClosedPeriods();
+    const uploadedStateRevision = stateWriteRevision;
     const body = JSON.stringify(state, null, 2);
     if (fileId) {
       await driveApi(`/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,modifiedTime`, {
@@ -3441,7 +3947,7 @@
       });
       appSettings.driveStateFileId = fileId;
       localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
-      return;
+      return finishDriveStateUpload(replacementRetry, uploadedStateRevision);
     }
 
     const upload = multipartDriveBody(
@@ -3459,6 +3965,23 @@
     });
     appSettings.driveStateFileId = created.id || "";
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    return finishDriveStateUpload(replacementRetry, uploadedStateRevision);
+  }
+
+  async function finishDriveStateUpload(replacementRetry, uploadedStateRevision) {
+    const replacementPending = stateReplacementIsPending();
+    const stateChanged = stateWriteRevision !== uploadedStateRevision;
+    if (!replacementPending && !stateChanged) return true;
+    if (replacementPending) prepareCurrentStateForDriveUpload();
+    if (replacementRetry >= 2) return false;
+    return uploadDriveStateWithCurrentData(replacementRetry + 1);
+  }
+
+  function prepareCurrentStateForDriveUpload() {
+    if (!stateReplacementIsPending()) return true;
+    reloadAfterExternalStateReplacement();
+    renderDriveStatus("Drive upload stopped because data was replaced in another tab.");
+    return false;
   }
 
   async function uploadInvoicePdf(invoice, pdfBlob) {
@@ -3971,7 +4494,7 @@
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const imported = JSON.parse(String(reader.result || "{}"));
         const tenantImport = extractTenantImport(imported);
@@ -3981,6 +4504,7 @@
             event.target.value = "";
             return;
           }
+          refreshCanonicalClosedPeriods();
           recordLocalBackup("Before tenant import", state);
           state = normalizeState({
             ...state,
@@ -3989,7 +4513,7 @@
           selectedTenantId = firstActiveTenantId() || "";
           selectedInvoiceId = "";
           draft = createBlankInvoice(selectedTenantId);
-          saveState("Imported tenants");
+          if (!saveState("Imported tenants")) return;
           fillLandlordForm();
           fillTenantForm(selectedTenantId);
           renderAll();
@@ -4001,16 +4525,19 @@
           event.target.value = "";
           return;
         }
-        recordLocalBackup("Before import", state);
-        state = normalizeState(imported);
-        selectedTenantId = firstActiveTenantId() || "";
-        selectedInvoiceId = "";
-        draft = createBlankInvoice(selectedTenantId);
-        saveState("Imported backup");
-        fillLandlordForm();
-        fillTenantForm(selectedTenantId);
-        renderAll();
-        showToast("Backup imported.");
+        await withDriveStateLock(() => {
+          refreshCanonicalClosedPeriods();
+          recordLocalBackup("Before import", state);
+          state = normalizeState(imported);
+          selectedTenantId = firstActiveTenantId() || "";
+          selectedInvoiceId = "";
+          draft = createBlankInvoice(selectedTenantId);
+          saveState("Imported backup", { persistClosedPeriods: true, stateReplacement: true });
+          fillLandlordForm();
+          fillTenantForm(selectedTenantId);
+          renderAll();
+          showToast("Backup imported.");
+        });
       } catch (error) {
         console.error(error);
         showToast("Backup import failed.");
@@ -4141,7 +4668,7 @@
     return tenant?.name === "Sample Tenant" && tenant?.email === "tenant@example.com" && toNumber(tenant?.rent) === 1450;
   }
 
-  function restoreLatestBackup() {
+  async function restoreLatestBackup() {
     const backups = loadLocalBackups();
     const latest = backups[0];
     if (!latest) {
@@ -4150,18 +4677,21 @@
     }
     const label = formatDateTime(latest.timestamp);
     if (!window.confirm(`Restore the latest local backup from ${label}?`)) return;
-    recordLocalBackup("Before local restore", state);
-    state = normalizeState(latest.data);
-    selectedTenantId = firstActiveTenantId() || "";
-    selectedInvoiceId = "";
-    draft = createBlankInvoice(selectedTenantId);
-    cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
-    saveState("Restored local backup");
-    fillLandlordForm();
-    fillTenantForm(selectedTenantId);
-    renderAll();
-    setView("settings");
-    showToast("Latest local backup restored.");
+    await withDriveStateLock(() => {
+      refreshCanonicalClosedPeriods();
+      recordLocalBackup("Before local restore", state);
+      state = normalizeState(latest.data);
+      selectedTenantId = firstActiveTenantId() || "";
+      selectedInvoiceId = "";
+      draft = createBlankInvoice(selectedTenantId);
+      cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+      saveState("Restored local backup", { persistClosedPeriods: true, stateReplacement: true });
+      fillLandlordForm();
+      fillTenantForm(selectedTenantId);
+      renderAll();
+      setView("settings");
+      showToast("Latest local backup restored.");
+    });
   }
 
   function loadLocalBackups() {
@@ -4534,6 +5064,8 @@
     window.__rentLedgerTest = {
       createInvoicePdfBlob,
       currentCycleSummary,
+      invoiceArtifactFingerprint,
+      withDriveStateLock,
     };
   }
 })();

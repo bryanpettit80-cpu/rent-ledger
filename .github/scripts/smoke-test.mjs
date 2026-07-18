@@ -51,15 +51,24 @@ function invoiceNumberPattern(prefix, date) {
 
 try {
   const page = await context.newPage();
+  const pageErrors = [];
+  page.on("pageerror", (error) => {
+    const detail = error?.stack || error?.message || String(error);
+    pageErrors.push(detail);
+    console.error(`Browser page error: ${detail}`);
+  });
   const rentCycleDate = currentRentCycleDate();
   const expectedRentPeriod = monthLabel(rentCycleDate);
   const expectedUtilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
+  const historicalPeriod = "January 2000";
   const expectedRentInvoiceNumber = invoiceNumberPattern("RNT", rentCycleDate);
   const expectedUtilityInvoiceNumber = invoiceNumberPattern("UTL", previousMonthDate(rentCycleDate));
   const expectedDepositInvoiceNumber = invoiceNumberPattern("DEP", rentCycleDate);
-  await page.addInitScript(() => {
+  await page.addInitScript((version) => {
     window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ = true;
-  });
+    sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+  }, appVersion);
   await page.route("**/sw.js", (route) => route.abort());
   await page.goto(baseUrl, { waitUntil: "networkidle" });
 
@@ -74,7 +83,7 @@ try {
     }
   });
 
-  await page.evaluate((version) => {
+  const seedInitialFixture = (version) => {
     const state = {
       landlord: {
         name: "Test Landlord",
@@ -119,9 +128,74 @@ try {
     sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
     sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
-  }, appVersion);
+  };
+  let fixtureSeedError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.evaluate(seedInitialFixture, appVersion);
+      fixtureSeedError = null;
+      break;
+    } catch (error) {
+      fixtureSeedError = error;
+      if (!String(error?.message || error).includes("Execution context was destroyed")) throw error;
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+      await page.waitForTimeout(100);
+    }
+  }
+  if (fixtureSeedError) throw fixtureSeedError;
 
   await page.reload({ waitUntil: "networkidle" });
+
+  const driveLockOrder = await page.evaluate(async () => {
+    const order = [];
+    let signalStarted;
+    let releaseFirst;
+    const started = new Promise((resolve) => {
+      signalStarted = resolve;
+    });
+    const gate = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = window.__rentLedgerTest.withDriveStateLock(async () => {
+      order.push("first-start");
+      signalStarted();
+      await gate;
+      order.push("first-end");
+    });
+    await started;
+    const second = window.__rentLedgerTest.withDriveStateLock(async () => {
+      order.push("second");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    order.push("release");
+    releaseFirst();
+    await Promise.all([first, second]);
+    return order;
+  });
+  assert(
+    driveLockOrder.join("|") === "first-start|release|first-end|second",
+    `Drive operation lock should serialize replacement and artifact work across tabs, got ${driveLockOrder.join("|")}.`
+  );
+  const artifactFingerprintChanges = await page.evaluate(() => {
+    const tenantId = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").tenants?.[0]?.id || "";
+    const invoice = {
+      id: "fingerprint-test",
+      tenantId,
+      invoiceType: "rent",
+      invoiceNumber: "RNT-2000-01-0001",
+      issueDate: "2000-01-01",
+      dueDate: "2000-01-01",
+      billingPeriod: "January 2000",
+      lineItems: [{ type: "Rent", description: "Rent", amount: 100 }],
+      payments: [],
+      notes: "Original",
+      status: "open",
+    };
+    const before = window.__rentLedgerTest.invoiceArtifactFingerprint(invoice);
+    const after = window.__rentLedgerTest.invoiceArtifactFingerprint({ ...invoice, notes: "Changed" });
+    return before !== after;
+  });
+  assert(artifactFingerprintChanges, "Invoice artifact fingerprint should change when PDF source data changes.");
 
   const overviewState = await page.evaluate(() => ({
     hash: window.location.hash,
@@ -161,6 +235,18 @@ try {
     Math.abs(overviewState.settingsWidth + 2 - overviewState.navWidth) <= 1,
     `Expected Settings to fill the bottom nav row, got ${overviewState.settingsWidth} of ${overviewState.navWidth}.`
   );
+
+  await page.click('#billingHealthList [data-open-view="tenants"]');
+  const healthTenantActionState = await page.evaluate(() => ({
+    hash: window.location.hash,
+    tenantsActive: document.getElementById("view-tenants")?.classList.contains("is-active"),
+  }));
+  assert(
+    healthTenantActionState.hash === "#tenants" && healthTenantActionState.tenantsActive,
+    `Billing health tenant action should open Tenants, got hash ${healthTenantActionState.hash}.`
+  );
+  await page.click('[data-view="overview"]');
+  await page.waitForFunction(() => document.getElementById("view-overview")?.classList.contains("is-active"));
 
   const longPdfState = await page.evaluate(async ({ rentPeriod }) => {
     const lineItems = Array.from({ length: 46 }, (_, index) => ({
@@ -700,6 +786,256 @@ try {
   );
   assert(fullAfterPartialState.firstToggle === "Reopen", `Expected Reopen after full payment, got ${fullAfterPartialState.firstToggle}.`);
 
+  await page.evaluate(({ priorPeriod, historicalDepositPeriod }) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const depositInvoices = (state.invoices || []).filter((invoice) => invoice.invoiceType === "security");
+    depositInvoices.forEach((invoice) => {
+      invoice.billingPeriod = priorPeriod;
+      invoice.issueDate = "2026-06-15";
+      invoice.dueDate = "2026-07-01";
+      if (invoice.tenantId === "brenda") {
+        invoice.status = "partial";
+        invoice.payments = [
+          {
+            id: "prior-deposit-partial-payment",
+            date: "2026-07-10",
+            amount: 200,
+            method: "Partial payment",
+          },
+        ];
+      }
+    });
+    const originalDeposit = depositInvoices.find((invoice) => invoice.tenantId === "andrew");
+    state.invoices.push({
+      ...originalDeposit,
+      id: "legacy-duplicate-deposit",
+      invoiceNumber: "DEP-2000-01-0001",
+      issueDate: "2000-01-15",
+      dueDate: "2000-02-01",
+      billingPeriod: historicalDepositPeriod,
+      credits: 0,
+      payments: [],
+      status: "open",
+      updatedAt: "2000-01-15T12:00:00.000Z",
+    });
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+    window.location.hash = "#overview";
+  }, { priorPeriod: expectedUtilityPeriod, historicalDepositPeriod: historicalPeriod });
+  await page.reload({ waitUntil: "networkidle" });
+  try {
+    await page.waitForFunction(
+      ({ cycleCount, completeCopy }) =>
+        document.getElementById("securityDepositWorkflowCount")?.textContent?.trim() === "0 remaining" &&
+        document.getElementById("invoiceWorkflowCount")?.textContent?.trim() === cycleCount &&
+        (document.getElementById("cycleMissingSecurityDeposits")?.textContent || "").includes(completeCopy),
+      { cycleCount: "4 saved this cycle", completeCopy: "one-time security deposit invoice" },
+      { timeout: 5000 }
+    );
+  } catch (error) {
+    failures.push(
+      `Historical deposit state did not render after reload: ${error.message}. Page errors: ${
+        pageErrors.length ? pageErrors.join(" | ") : "none captured"
+      }.`
+    );
+  }
+
+  const historicalDepositOverview = await page.evaluate(() => ({
+    depositCount: document.getElementById("securityDepositWorkflowCount")?.textContent?.trim(),
+    missingText: document.getElementById("cycleMissingSecurityDeposits")?.textContent || "",
+    actionText: document.getElementById("billingActionList")?.textContent || "",
+    cycleInvoiceCount: document.getElementById("invoiceWorkflowCount")?.textContent?.trim(),
+    cycleDepositCards: [...document.querySelectorAll("#overviewInvoiceList .invoice-card")].filter((card) =>
+      card.textContent.includes("Security Deposit Invoice")
+    ).length,
+  }));
+  assert(
+    historicalDepositOverview.depositCount === "0 remaining",
+    `Prior-period paid and partial deposit invoices should leave 0 remaining, got ${historicalDepositOverview.depositCount}.`
+  );
+  assert(
+    historicalDepositOverview.missingText.includes("one-time security deposit invoice"),
+    `Expected historical issuance completion copy, got: ${historicalDepositOverview.missingText}.`
+  );
+  assert(
+    !historicalDepositOverview.actionText.includes("Create security deposit invoices"),
+    "Prior-period deposit invoices should remove the create-deposit next action."
+  );
+  assert(
+    historicalDepositOverview.cycleInvoiceCount === "4 saved this cycle" &&
+      historicalDepositOverview.cycleDepositCards === 0,
+    `Prior-period deposits must stay out of Cycle Invoices, got ${historicalDepositOverview.cycleInvoiceCount} and ${historicalDepositOverview.cycleDepositCards} deposit cards.`
+  );
+
+  await page.click('[data-view="security"]');
+  const historicalDepositWorkflow = await page.evaluate(() => ({
+    copy: document.getElementById("securityDepositBatchCopy")?.textContent?.trim(),
+    rows: [...document.querySelectorAll("#securityDepositBatchList .cycle-row")].map((row) => row.textContent.trim()),
+    batchDisabled: document.getElementById("createAllSecurityDepositInvoices")?.disabled,
+    createButtons: document.querySelectorAll("#securityDepositBatchList [data-create-security-deposit-invoice]").length,
+  }));
+  assert(
+    historicalDepositWorkflow.copy.includes("one-time security deposit invoice") &&
+      historicalDepositWorkflow.copy.includes("Payment status does not create another invoice"),
+    `Expected one-time deposit workflow copy, got: ${historicalDepositWorkflow.copy}.`
+  );
+  assert(
+    historicalDepositWorkflow.rows[0]?.includes("Paid") &&
+      historicalDepositWorkflow.rows[1]?.includes("Partially paid") &&
+      historicalDepositWorkflow.rows.every((row) => row.includes(`issued for ${expectedUtilityPeriod}`)),
+    `Expected paid and partial prior-period deposit rows, got: ${historicalDepositWorkflow.rows.join(" | ")}.`
+  );
+  assert(historicalDepositWorkflow.batchDisabled === true, "Deposit batch creation must disable after historical issuance.");
+  assert(historicalDepositWorkflow.createButtons === 0, "Issued tenants must not show another deposit Create button.");
+
+  await page.click("#saveInvoice");
+  await page.waitForFunction(() => document.getElementById("toast")?.textContent?.includes("already exists for this tenant"));
+  const duplicateDepositState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      count: (state.invoices || []).filter((invoice) => invoice.invoiceType === "security").length,
+      selectedNumber: document.getElementById("invoiceNumber")?.value,
+    };
+  });
+  assert(duplicateDepositState.count === 3, `Manual Save must not create a fourth deposit invoice, got ${duplicateDepositState.count}.`);
+  assert(
+    duplicateDepositState.selectedNumber?.startsWith("DEP-"),
+    `Duplicate prevention should open the existing deposit invoice, got ${duplicateDepositState.selectedNumber}.`
+  );
+
+  await page.click('[data-view="invoices"]');
+  await page.click('#invoiceHistory [data-load-invoice="legacy-duplicate-deposit"]');
+  await page.fill("#invoiceNotes", "Edited legacy duplicate without creating another invoice");
+  await page.click("#saveInvoice");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const legacyInvoice = (state.invoices || []).find((invoice) => invoice.id === "legacy-duplicate-deposit");
+    return legacyInvoice?.notes === "Edited legacy duplicate without creating another invoice";
+  });
+  const legacyDuplicateEditState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      depositCount: (state.invoices || []).filter((invoice) => invoice.invoiceType === "security").length,
+      selectedNumber: document.getElementById("invoiceNumber")?.value,
+    };
+  });
+  assert(
+    legacyDuplicateEditState.depositCount === 3 && legacyDuplicateEditState.selectedNumber === "DEP-2000-01-0001",
+    `Editing a legacy duplicate should preserve all three records and the selected invoice, got ${legacyDuplicateEditState.depositCount}/${legacyDuplicateEditState.selectedNumber}.`
+  );
+
+  const depositRetargetBefore = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    const targetInvoice = (state.invoices || []).find(
+      (invoice) => invoice.invoiceType === "security" && invoice.tenantId === "brenda"
+    );
+    return {
+      count: (state.invoices || []).filter((invoice) => invoice.invoiceType === "security").length,
+      sourceTenantId: (state.invoices || []).find((invoice) => invoice.id === "legacy-duplicate-deposit")?.tenantId,
+      targetInvoiceNumber: targetInvoice?.invoiceNumber,
+    };
+  });
+  await page.selectOption("#tenantSelect", "brenda");
+  await page.click("#saveInvoice");
+  await page.waitForFunction(
+    (targetInvoiceNumber) =>
+      document.getElementById("toast")?.textContent?.includes("already exists for this tenant") &&
+      document.getElementById("invoiceNumber")?.value === targetInvoiceNumber,
+    depositRetargetBefore.targetInvoiceNumber
+  );
+  const depositRetargetAfter = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      count: (state.invoices || []).filter((invoice) => invoice.invoiceType === "security").length,
+      sourceTenantId: (state.invoices || []).find((invoice) => invoice.id === "legacy-duplicate-deposit")?.tenantId,
+      openedTenantId: document.getElementById("tenantSelect")?.value,
+      openedInvoiceNumber: document.getElementById("invoiceNumber")?.value,
+      toast: document.getElementById("toast")?.textContent?.trim(),
+    };
+  });
+  assert(
+    depositRetargetBefore.sourceTenantId === "andrew" &&
+      depositRetargetAfter.sourceTenantId === "andrew" &&
+      depositRetargetAfter.count === depositRetargetBefore.count,
+    `Blocked deposit retarget should preserve the source tenant and invoice count, got ${depositRetargetAfter.sourceTenantId}/${depositRetargetAfter.count}.`
+  );
+  assert(
+    depositRetargetAfter.openedTenantId === "brenda" &&
+      depositRetargetAfter.openedInvoiceNumber === depositRetargetBefore.targetInvoiceNumber &&
+      depositRetargetAfter.toast.includes("already exists for this tenant"),
+    `Blocked deposit retarget should open Brenda's existing invoice, got ${depositRetargetAfter.openedTenantId}/${depositRetargetAfter.openedInvoiceNumber}/${depositRetargetAfter.toast}.`
+  );
+
+  await page.click('[data-view="invoices"]');
+  const paidDepositId = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return (state.invoices || []).find((invoice) => invoice.invoiceType === "security" && invoice.status === "paid")?.id;
+  });
+  const dialogsBeforeDepositDelete = dialogMessages.length;
+  nextDialogAction = "dismiss";
+  await page.click(`#invoiceHistory [data-delete-invoice="${paidDepositId}"]`);
+  const depositDeleteMessages = dialogMessages.slice(dialogsBeforeDepositDelete);
+  assert(
+    depositDeleteMessages.some(
+      (message) => message.includes("removes one issuance record") && message.includes("may make")
+    ),
+    `Individual deposit deletion should explain the issuance consequence, got: ${depositDeleteMessages.join(" | ")}.`
+  );
+
+  const dialogsBeforePaidCleanup = dialogMessages.length;
+  await page.click("#clearPaid");
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return !(state.invoices || []).some(
+      (invoice) => invoice.status === "paid" && invoice.invoiceType !== "security"
+    );
+  });
+  const paidCleanupState = await page.evaluate((depositId) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      depositRetained: (state.invoices || []).some((invoice) => invoice.id === depositId),
+      depositCount: (state.invoices || []).filter((invoice) => invoice.invoiceType === "security").length,
+      auditMessage: state.auditEvents?.[0]?.message || "",
+      toast: document.getElementById("toast")?.textContent?.trim(),
+    };
+  }, paidDepositId);
+  const paidCleanupMessages = dialogMessages.slice(dialogsBeforePaidCleanup);
+  assert(
+    paidCleanupMessages.some((message) => message.includes("will be retained as one-time issuance records")),
+    `Paid cleanup should explain deposit retention, got: ${paidCleanupMessages.join(" | ")}.`
+  );
+  assert(paidCleanupState.depositRetained, "Bulk paid cleanup must retain the paid security deposit invoice.");
+  assert(paidCleanupState.depositCount === 3, `Bulk paid cleanup must retain all deposit records, got ${paidCleanupState.depositCount}.`);
+  assert(
+    paidCleanupState.auditMessage === "Deleted 1 paid non-deposit invoice; retained 1 paid security deposit invoice",
+    `Paid cleanup audit should report exact deleted and retained counts, got: ${paidCleanupState.auditMessage}.`
+  );
+  assert(
+    paidCleanupState.toast.includes("paid security deposit invoice was retained"),
+    `Paid cleanup toast should confirm retention, got: ${paidCleanupState.toast}.`
+  );
+
+  const invoiceCountBeforeDepositOnlyCleanup = await page.evaluate(() => {
+    return (JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || []).length;
+  });
+  const dialogsBeforeDepositOnlyCleanup = dialogMessages.length;
+  await page.click("#clearPaid");
+  const depositOnlyCleanupState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      invoiceCount: (state.invoices || []).length,
+      toast: document.getElementById("toast")?.textContent?.trim(),
+    };
+  });
+  assert(
+    depositOnlyCleanupState.invoiceCount === invoiceCountBeforeDepositOnlyCleanup &&
+      dialogMessages.length === dialogsBeforeDepositOnlyCleanup,
+    "When all paid records are deposits, bulk cleanup should retain state without opening a confirmation."
+  );
+  assert(
+    depositOnlyCleanupState.toast === "Paid security deposit invoices are retained as one-time issuance records.",
+    `Unexpected deposit-only cleanup message: ${depositOnlyCleanupState.toast}.`
+  );
+
   await page.evaluate(
     ({ rentPeriod, utilityPeriod }) => {
       const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
@@ -810,13 +1146,15 @@ try {
 
   await page.click("#lockCurrentCycle");
   await page.waitForFunction(() => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    return (state.closedPeriods || []).length >= 2;
+    const closedPeriods = JSON.parse(localStorage.getItem("rent-ledger:closed-periods:v1") || "[]");
+    return closedPeriods.length >= 2;
   });
   const lockedState = await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
     return {
       closedPeriods: state.closedPeriods || [],
+      canonicalClosedPeriods: JSON.parse(localStorage.getItem("rent-ledger:closed-periods:v1") || "[]"),
+      auditMessages: (state.auditEvents || []).map((event) => event.message),
       lockDisabled: document.getElementById("lockCurrentCycle")?.disabled,
       unlockDisabled: document.getElementById("unlockCurrentCycle")?.disabled,
       closedPeriodText: document.getElementById("closedPeriodList")?.textContent || "",
@@ -830,9 +1168,234 @@ try {
     `Expected locked rent and utility periods, got ${lockedState.closedPeriods.map((period) => period.label).join(", ")}.`
   );
   assert(
+    lockedState.canonicalClosedPeriods.some((period) => period.label === expectedRentPeriod) &&
+      lockedState.canonicalClosedPeriods.some((period) => period.label === expectedUtilityPeriod),
+    "Lock current cycle should persist the exact rent and utility periods to the canonical lock record."
+  );
+  assert(
+    lockedState.auditMessages.some(
+      (message) => message.includes("Locked billing periods") &&
+        message.includes(expectedRentPeriod) &&
+        message.includes(expectedUtilityPeriod)
+    ),
+    "Lock audit copy should name the exact rent and utility periods."
+  );
+  assert(
     lockedState.closedPeriodText.includes(expectedRentPeriod) && lockedState.closedPeriodText.includes(expectedUtilityPeriod),
     `Closed period list should render locked periods, got: ${lockedState.closedPeriodText}.`
   );
+
+  await page.reload({ waitUntil: "networkidle" });
+  const reloadedLockState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      closedPeriods: state.closedPeriods || [],
+      lockDisabled: document.getElementById("lockCurrentCycle")?.disabled,
+      unlockDisabled: document.getElementById("unlockCurrentCycle")?.disabled,
+    };
+  });
+  assert(reloadedLockState.closedPeriods.length >= 2, "Current-cycle locks should persist after a reload.");
+  assert(
+    reloadedLockState.lockDisabled === true && reloadedLockState.unlockDisabled === false,
+    "Reloaded current-cycle lock controls should retain their locked state."
+  );
+
+  await page.evaluate((period) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    state.closedPeriods = [...(state.closedPeriods || []), { label: period, lockedAt: "2000-02-01T00:00:00.000Z" }];
+    localStorage.setItem("rent-ledger:closed-periods:v1", JSON.stringify(state.closedPeriods));
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+  }, historicalPeriod);
+  await page.reload({ waitUntil: "networkidle" });
+
+  const dialogsBeforeUnlockCancel = dialogMessages.length;
+  nextDialogAction = "dismiss";
+  await page.click("#unlockCurrentCycle");
+  await page.waitForTimeout(100);
+  const cancelledCurrentUnlock = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.closedPeriods || [];
+  });
+  assert(cancelledCurrentUnlock.length >= 3, "Cancelling current-cycle unlock should retain every lock.");
+  assert(
+    dialogMessages
+      .slice(dialogsBeforeUnlockCancel)
+      .some((message) => message.includes("Unlock the current-cycle safeguards")),
+    "Current-cycle unlock should explain which safeguards will be removed."
+  );
+
+  await page.click("#unlockCurrentCycle");
+  await page.waitForFunction((period) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return (state.closedPeriods || []).length === 1 && state.closedPeriods[0]?.label === period;
+  }, historicalPeriod);
+  const currentUnlockState = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      lockDisabled: document.getElementById("lockCurrentCycle")?.disabled,
+      unlockDisabled: document.getElementById("unlockCurrentCycle")?.disabled,
+      closedPeriodText: document.getElementById("closedPeriodList")?.textContent || "",
+      auditMessages: (state.auditEvents || []).map((event) => event.message),
+    };
+  });
+  assert(
+    currentUnlockState.lockDisabled === false && currentUnlockState.unlockDisabled === true,
+    "Unlock current cycle should leave only historical locks and re-enable Lock current cycle."
+  );
+  assert(
+    currentUnlockState.closedPeriodText.includes(historicalPeriod),
+    "Unlock current cycle must not silently remove a historical period lock."
+  );
+  assert(
+    currentUnlockState.auditMessages.some(
+      (message) => message.includes("Unlocked billing periods") &&
+        message.includes(expectedRentPeriod) &&
+        message.includes(expectedUtilityPeriod)
+    ),
+    "Current-cycle unlock audit copy should name the exact rent and utility periods."
+  );
+
+  const historicalUnlockSelector = `[data-unlock-period="${historicalPeriod.toLowerCase()}"]`;
+  nextDialogAction = "dismiss";
+  await page.click(historicalUnlockSelector);
+  await page.waitForTimeout(100);
+  const cancelledHistoricalUnlock = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.closedPeriods || [];
+  });
+  assert(cancelledHistoricalUnlock.length === 1, "Cancelling a historical unlock should keep that period locked.");
+
+  await page.click(historicalUnlockSelector);
+  await page.waitForFunction(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return (state.closedPeriods || []).length === 0;
+  });
+  assert(
+    (await page.locator("#closedPeriodList").textContent()).includes("No billing periods are locked"),
+    "Confirming a historical unlock should remove the exact listed period."
+  );
+
+  const synchronizedPage = await context.newPage();
+  await synchronizedPage.addInitScript((version) => {
+    window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ = true;
+    sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+  }, appVersion);
+  await synchronizedPage.route("**/sw.js", (route) => route.abort());
+  await synchronizedPage.goto(`${baseUrl}#settings`, { waitUntil: "networkidle" });
+  await synchronizedPage.fill("#landlordName", "UNSAVED CROSS-TAB LANDLORD");
+  await synchronizedPage.click('[data-view="tenants"]');
+  await synchronizedPage.fill("#tenantMemo", "Keep this unsaved tenant edit during lock sync.");
+  await synchronizedPage.click('[data-view="rent"]');
+  await synchronizedPage.fill("#invoiceNumber", "UNSAVED-CROSS-TAB-DRAFT");
+  await synchronizedPage.fill("#billingPeriod", historicalPeriod);
+  await synchronizedPage.fill("#invoiceNotes", "Keep this unsaved draft when another tab changes locks.");
+  await page.click("#lockCurrentCycle");
+  await synchronizedPage.waitForFunction(
+    ({ rentPeriod, utilityPeriod }) => {
+      const closedPeriods = JSON.parse(localStorage.getItem("rent-ledger:closed-periods:v1") || "[]");
+      const text = document.getElementById("closedPeriodList")?.textContent || "";
+      return (
+        closedPeriods.length >= 2 && text.includes(rentPeriod) && text.includes(utilityPeriod)
+      );
+    },
+    { rentPeriod: expectedRentPeriod, utilityPeriod: expectedUtilityPeriod }
+  );
+  const synchronizedLockState = await synchronizedPage.evaluate(() => ({
+    lockDisabled: document.getElementById("lockCurrentCycle")?.disabled,
+    unlockDisabled: document.getElementById("unlockCurrentCycle")?.disabled,
+    invoiceNumber: document.getElementById("invoiceNumber")?.value,
+    billingPeriod: document.getElementById("billingPeriod")?.value,
+    invoiceNotes: document.getElementById("invoiceNotes")?.value,
+    saveState: document.getElementById("saveState")?.textContent?.trim(),
+    landlordName: document.getElementById("landlordName")?.value,
+    tenantMemo: document.getElementById("tenantMemo")?.value,
+  }));
+  assert(
+    synchronizedLockState.lockDisabled === true && synchronizedLockState.unlockDisabled === false,
+    "A second open tab should refresh its period-lock controls after another tab locks the cycle."
+  );
+  assert(
+    synchronizedLockState.invoiceNumber === "UNSAVED-CROSS-TAB-DRAFT" &&
+      synchronizedLockState.billingPeriod === historicalPeriod &&
+      synchronizedLockState.invoiceNotes === "Keep this unsaved draft when another tab changes locks." &&
+      synchronizedLockState.saveState === "Draft",
+    "A second tab must preserve its unsaved new invoice draft while applying an external lock update."
+  );
+  assert(
+    synchronizedLockState.landlordName === "UNSAVED CROSS-TAB LANDLORD" &&
+      synchronizedLockState.tenantMemo === "Keep this unsaved tenant edit during lock sync.",
+    "Scoped lock synchronization must preserve unsaved landlord and tenant forms in another tab."
+  );
+  await page.click("#unlockCurrentCycle");
+  await synchronizedPage.waitForFunction(() => {
+    const closedPeriods = JSON.parse(localStorage.getItem("rent-ledger:closed-periods:v1") || "[]");
+    return (
+      closedPeriods.length === 0 &&
+      (document.getElementById("closedPeriodList")?.textContent || "").includes("No billing periods are locked") &&
+      document.getElementById("invoiceNumber")?.value === "UNSAVED-CROSS-TAB-DRAFT" &&
+      document.getElementById("landlordName")?.value === "UNSAVED CROSS-TAB LANDLORD" &&
+      document.getElementById("tenantMemo")?.value === "Keep this unsaved tenant edit during lock sync."
+    );
+  });
+
+  const replacementFixture = await page.evaluate(() => {
+    const replacement = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    replacement.landlord.name = "AUTHORITATIVE REPLACEMENT LANDLORD";
+    if (replacement.tenants?.[0]) {
+      replacement.tenants[0].memo = "Authoritative replacement tenant memo.";
+    }
+    const invoiceCount = replacement.invoices?.length || 0;
+    const marker = JSON.stringify({ id: "smoke-full-replacement", replacedAt: new Date().toISOString() });
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(replacement));
+    localStorage.setItem("rent-ledger:state-replacement:v1", marker);
+    return { invoiceCount, marker };
+  });
+  await synchronizedPage.waitForFunction(
+    (marker) =>
+      localStorage.getItem("rent-ledger:state-replacement:v1") === marker &&
+      (document.getElementById("toast")?.textContent || "").includes("Open forms are preserved"),
+    replacementFixture.marker
+  );
+  const preservedAfterReplacement = await synchronizedPage.evaluate(() => ({
+    invoiceNumber: document.getElementById("invoiceNumber")?.value,
+    invoiceNotes: document.getElementById("invoiceNotes")?.value,
+    landlordName: document.getElementById("landlordName")?.value,
+    tenantMemo: document.getElementById("tenantMemo")?.value,
+  }));
+  assert(
+    preservedAfterReplacement.invoiceNumber === "UNSAVED-CROSS-TAB-DRAFT" &&
+      preservedAfterReplacement.invoiceNotes === "Keep this unsaved draft when another tab changes locks." &&
+      preservedAfterReplacement.landlordName === "UNSAVED CROSS-TAB LANDLORD" &&
+      preservedAfterReplacement.tenantMemo === "Keep this unsaved tenant edit during lock sync.",
+    "A full replacement marker should preserve open form text until the stale tab attempts to save."
+  );
+
+  await synchronizedPage.click("#saveInvoice");
+  await synchronizedPage.waitForFunction(() =>
+    (document.getElementById("toast")?.textContent || "").includes("current saved state was reloaded")
+  );
+  const staleSaveBarrierState = await synchronizedPage.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return {
+      storedLandlord: stored.landlord?.name,
+      storedTenantMemo: stored.tenants?.[0]?.memo,
+      storedInvoiceCount: stored.invoices?.length || 0,
+      formLandlord: document.getElementById("landlordName")?.value,
+      formTenantMemo: document.getElementById("tenantMemo")?.value,
+      formInvoiceNumber: document.getElementById("invoiceNumber")?.value,
+    };
+  });
+  assert(
+    staleSaveBarrierState.storedLandlord === "AUTHORITATIVE REPLACEMENT LANDLORD" &&
+      staleSaveBarrierState.storedTenantMemo === "Authoritative replacement tenant memo." &&
+      staleSaveBarrierState.storedInvoiceCount === replacementFixture.invoiceCount &&
+      staleSaveBarrierState.formLandlord === "AUTHORITATIVE REPLACEMENT LANDLORD" &&
+      staleSaveBarrierState.formTenantMemo === "Authoritative replacement tenant memo." &&
+      staleSaveBarrierState.formInvoiceNumber !== "UNSAVED-CROSS-TAB-DRAFT",
+    "A stale tab save must reload the authoritative replacement instead of overwriting it."
+  );
+  await synchronizedPage.close();
 
   await page.evaluate(
     ({ rentPeriod, utilityPeriod }) => {
@@ -878,6 +1441,7 @@ try {
         closedPeriods: [{ label: rentPeriod }, { label: utilityPeriod }],
         auditEvents: [],
       };
+      localStorage.setItem("rent-ledger:closed-periods:v1", JSON.stringify(resetState.closedPeriods));
       localStorage.setItem("rent-ledger:v1", JSON.stringify(resetState));
     },
     { rentPeriod: expectedRentPeriod, utilityPeriod: expectedUtilityPeriod }
@@ -937,6 +1501,55 @@ try {
     `Expected accepted locked-period create confirmation, got: ${lockedAcceptMessages.join(" | ")}.`
   );
 
+  await page.evaluate((sourcePeriod) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    state.invoices.push({
+      id: "locked-target-edit",
+      tenantId: "brenda",
+      invoiceType: "rent",
+      invoiceNumber: "RNT-2000-01-0001",
+      issueDate: "2000-01-01",
+      dueDate: "2000-01-05",
+      billingPeriod: sourcePeriod,
+      lineItems: [{ type: "Rent", description: "Historical rent", amount: 900 }],
+      previousBalance: 0,
+      credits: 0,
+      payments: [],
+      status: "open",
+      updatedAt: "2000-01-01T00:00:00.000Z",
+    });
+    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+  }, historicalPeriod);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.click('[data-view="invoices"]');
+  await page.locator('#invoiceHistory [data-load-invoice="locked-target-edit"]').click();
+  await page.fill("#billingPeriod", expectedRentPeriod);
+
+  const dialogsBeforeTargetCancel = dialogMessages.length;
+  nextDialogAction = "dismiss";
+  await page.click("#saveInvoice");
+  await page.waitForTimeout(100);
+  const cancelledTargetPeriod = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices.find((invoice) => invoice.id === "locked-target-edit")?.billingPeriod;
+  });
+  assert(
+    cancelledTargetPeriod === historicalPeriod,
+    `Cancelling a locked-target edit should retain ${historicalPeriod}, got ${cancelledTargetPeriod}.`
+  );
+  assert(
+    dialogMessages
+      .slice(dialogsBeforeTargetCancel)
+      .some((message) => message.includes(`${expectedRentPeriod} is locked`) && message.includes("save changes")),
+    "Moving an invoice from an unlocked source into a locked target period must require confirmation."
+  );
+
+  await page.click("#saveInvoice");
+  await page.waitForFunction((targetPeriod) => {
+    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+    return state.invoices.find((invoice) => invoice.id === "locked-target-edit")?.billingPeriod === targetPeriod;
+  }, expectedRentPeriod);
+
   await page.click('[data-view="settings"]');
 
   const testClientId = "123456789012-testclient.apps.googleusercontent.com";
@@ -962,6 +1575,9 @@ try {
   await page.fill("#googleClientId", testClientId);
   await page.check("#driveAutoSync");
   await page.click("#connectDrive");
+  await page.waitForFunction(
+    () => document.getElementById("driveStatus")?.textContent?.trim() === "Google Drive connection was cancelled or failed."
+  );
   const storedSettings = await page.evaluate(() => {
     const settings = JSON.parse(localStorage.getItem("rent-ledger:settings:v1"));
     return {
@@ -976,6 +1592,7 @@ try {
     storedSettings.driveStatus === "Google Drive connection was cancelled or failed.",
     `Unexpected mocked connection status: ${storedSettings.driveStatus}.`
   );
+  assert(pageErrors.length === 0, `Browser page errors were captured: ${pageErrors.join(" | ")}.`);
 } finally {
   await context.close();
   await browser.close();
