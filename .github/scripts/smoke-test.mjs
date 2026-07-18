@@ -49,6 +49,89 @@ function invoiceNumberPattern(prefix, date) {
   return new RegExp(`^${prefix}-${year}-${month}-\\d{4}$`);
 }
 
+function makeSmokeState({
+  landlordName = "Test Landlord",
+  firstTenantMemo = "",
+  invoices = [],
+  closedPeriods = [],
+  auditEvents = [],
+} = {}) {
+  return {
+    landlord: {
+      name: landlordName,
+      address: "1 Test Way",
+      email: "",
+      phone: "",
+      paymentInstructions: "Pay test.",
+    },
+    tenants: [
+      {
+        id: "andrew",
+        name: "Andrew Buckwalter",
+        unit: "Unit A",
+        address: "",
+        email: "",
+        phone: "",
+        rent: 850,
+        securityDeposit: 350,
+        utilityUnits: 1,
+        active: true,
+        excludeUtilities: false,
+        memo: firstTenantMemo,
+      },
+      {
+        id: "brenda",
+        name: "Brenda Carter",
+        unit: "Unit B",
+        address: "",
+        email: "",
+        phone: "",
+        rent: 900,
+        securityDeposit: 900,
+        utilityUnits: 2,
+        active: true,
+        excludeUtilities: false,
+        memo: "",
+      },
+    ],
+    invoices,
+    closedPeriods,
+    auditEvents,
+  };
+}
+
+function makeSmokeInvoice({
+  id,
+  tenantId,
+  invoiceType,
+  invoiceNumber,
+  billingPeriod,
+  amount,
+  status = "open",
+  issueDate = "2026-07-01",
+  dueDate = "2026-07-01",
+  credits = 0,
+  payments = [],
+  updatedAt = "2026-07-01T12:00:00.000Z",
+}) {
+  const lineType = invoiceType === "security" ? "Security Deposit" : invoiceType === "utility" ? "Utility" : "Rent";
+  return {
+    id,
+    tenantId,
+    invoiceType,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    billingPeriod,
+    lineItems: [{ type: lineType, description: `${lineType} smoke fixture`, amount }],
+    previousBalance: 0,
+    credits,
+    payments,
+    status,
+    updatedAt,
+  };
+}
+
 try {
   const page = await context.newPage();
   const pageErrors = [];
@@ -786,43 +869,103 @@ try {
   );
   assert(fullAfterPartialState.firstToggle === "Reopen", `Expected Reopen after full payment, got ${fullAfterPartialState.firstToggle}.`);
 
-  await page.evaluate(({ priorPeriod, historicalDepositPeriod }) => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    const depositInvoices = (state.invoices || []).filter((invoice) => invoice.invoiceType === "security");
-    depositInvoices.forEach((invoice) => {
-      invoice.billingPeriod = priorPeriod;
-      invoice.issueDate = "2026-06-15";
-      invoice.dueDate = "2026-07-01";
-      if (invoice.tenantId === "brenda") {
-        invoice.status = "partial";
-        invoice.payments = [
+  const historicalDepositFixture = makeSmokeState({
+    invoices: [
+      makeSmokeInvoice({
+        id: "fixture-rent-andrew",
+        tenantId: "andrew",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2099-01-0001",
+        billingPeriod: expectedRentPeriod,
+        amount: 850,
+      }),
+      makeSmokeInvoice({
+        id: "fixture-rent-brenda",
+        tenantId: "brenda",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2099-01-0002",
+        billingPeriod: expectedRentPeriod,
+        amount: 900,
+      }),
+      makeSmokeInvoice({
+        id: "fixture-utility-andrew",
+        tenantId: "andrew",
+        invoiceType: "utility",
+        invoiceNumber: "UTL-2099-01-0001",
+        billingPeriod: expectedUtilityPeriod,
+        amount: 70,
+        status: "paid",
+        payments: [
+          {
+            id: "fixture-utility-full-payment",
+            date: "2026-07-10",
+            amount: 70,
+            method: "Full payment",
+          },
+        ],
+      }),
+      makeSmokeInvoice({
+        id: "fixture-utility-brenda",
+        tenantId: "brenda",
+        invoiceType: "utility",
+        invoiceNumber: "UTL-2099-01-0002",
+        billingPeriod: expectedUtilityPeriod,
+        amount: 140,
+      }),
+      makeSmokeInvoice({
+        id: "fixture-deposit-andrew",
+        tenantId: "andrew",
+        invoiceType: "security",
+        invoiceNumber: "DEP-2099-01-0001",
+        billingPeriod: expectedUtilityPeriod,
+        amount: 350,
+        status: "paid",
+        issueDate: "2026-06-15",
+        credits: 200,
+        payments: [
+          {
+            id: "fixture-deposit-full-payment",
+            date: "2026-07-10",
+            amount: 150,
+            method: "Full payment",
+          },
+        ],
+      }),
+      makeSmokeInvoice({
+        id: "fixture-deposit-brenda",
+        tenantId: "brenda",
+        invoiceType: "security",
+        invoiceNumber: "DEP-2099-01-0002",
+        billingPeriod: expectedUtilityPeriod,
+        amount: 900,
+        status: "partial",
+        issueDate: "2026-06-15",
+        payments: [
           {
             id: "prior-deposit-partial-payment",
             date: "2026-07-10",
             amount: 200,
             method: "Partial payment",
           },
-        ];
-      }
-    });
-    const originalDeposit = depositInvoices.find((invoice) => invoice.tenantId === "andrew");
-    state.invoices.push({
-      ...originalDeposit,
-      id: "legacy-duplicate-deposit",
-      invoiceNumber: "DEP-2000-01-0001",
-      issueDate: "2000-01-15",
-      dueDate: "2000-02-01",
-      billingPeriod: historicalDepositPeriod,
-      credits: 0,
-      payments: [],
-      status: "open",
-      updatedAt: "2000-01-15T12:00:00.000Z",
-    });
-    // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // lgtm[js/clear-text-storage-of-sensitive-data]
+        ],
+      }),
+      makeSmokeInvoice({
+        id: "legacy-duplicate-deposit",
+        tenantId: "andrew",
+        invoiceType: "security",
+        invoiceNumber: "DEP-2000-01-0001",
+        billingPeriod: historicalPeriod,
+        amount: 350,
+        issueDate: "2000-01-15",
+        dueDate: "2000-02-01",
+        updatedAt: "2000-01-15T12:00:00.000Z",
+      }),
+    ],
+  });
+  await page.evaluate((state) => {
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
     window.location.hash = "#overview";
-  }, { priorPeriod: expectedUtilityPeriod, historicalDepositPeriod: historicalPeriod });
+  }, historicalDepositFixture);
   await page.reload({ waitUntil: "networkidle" });
   try {
     await page.waitForFunction(
@@ -1202,25 +1345,22 @@ try {
     "Reloaded current-cycle lock controls should retain their locked state."
   );
 
-  await page.evaluate((period) => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    state.closedPeriods = [...(state.closedPeriods || []), { label: period, lockedAt: "2000-02-01T00:00:00.000Z" }];
-    // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // lgtm[js/clear-text-storage-of-sensitive-data]
-    localStorage.setItem("rent-ledger:closed-periods:v1", JSON.stringify(state.closedPeriods));
-    // lgtm[js/clear-text-storage-of-sensitive-data]
-    localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
-  }, historicalPeriod);
+  await page.evaluate((closedPeriods) => {
+    localStorage.setItem("rent-ledger:closed-periods:v1", JSON.stringify(closedPeriods));
+  }, [
+    { label: expectedRentPeriod, lockedAt: "2026-07-18T12:00:00.000Z" },
+    { label: expectedUtilityPeriod, lockedAt: "2026-07-18T12:00:00.000Z" },
+    { label: historicalPeriod, lockedAt: "2000-02-01T00:00:00.000Z" },
+  ]);
   await page.reload({ waitUntil: "networkidle" });
 
   const dialogsBeforeUnlockCancel = dialogMessages.length;
   nextDialogAction = "dismiss";
   await page.click("#unlockCurrentCycle");
   await page.waitForTimeout(100);
-  const cancelledCurrentUnlock = await page.evaluate(() => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    return state.closedPeriods || [];
-  });
+  const cancelledCurrentUnlock = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("rent-ledger:closed-periods:v1") || "[]")
+  );
   assert(cancelledCurrentUnlock.length >= 3, "Cancelling current-cycle unlock should retain every lock.");
   assert(
     dialogMessages
@@ -1344,20 +1484,17 @@ try {
     );
   });
 
-  const replacementFixture = await page.evaluate(() => {
-    const replacement = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    replacement.landlord.name = "AUTHORITATIVE REPLACEMENT LANDLORD";
-    if (replacement.tenants?.[0]) {
-      replacement.tenants[0].memo = "Authoritative replacement tenant memo.";
-    }
+  const authoritativeReplacementState = makeSmokeState({
+    landlordName: "AUTHORITATIVE REPLACEMENT LANDLORD",
+    firstTenantMemo: "Authoritative replacement tenant memo.",
+  });
+  const replacementFixture = await page.evaluate((replacement) => {
     const invoiceCount = replacement.invoices?.length || 0;
     const marker = JSON.stringify({ id: "smoke-full-replacement", replacedAt: new Date().toISOString() });
-    // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // lgtm[js/clear-text-storage-of-sensitive-data]
     localStorage.setItem("rent-ledger:v1", JSON.stringify(replacement));
     localStorage.setItem("rent-ledger:state-replacement:v1", marker);
     return { invoiceCount, marker };
-  });
+  }, authoritativeReplacementState);
   await synchronizedPage.waitForFunction(
     (marker) =>
       localStorage.getItem("rent-ledger:state-replacement:v1") === marker &&
@@ -1508,27 +1645,25 @@ try {
     `Expected accepted locked-period create confirmation, got: ${lockedAcceptMessages.join(" | ")}.`
   );
 
-  await page.evaluate((sourcePeriod) => {
-    const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
-    state.invoices.push({
-      id: "locked-target-edit",
-      tenantId: "brenda",
-      invoiceType: "rent",
-      invoiceNumber: "RNT-2000-01-0001",
-      issueDate: "2000-01-01",
-      dueDate: "2000-01-05",
-      billingPeriod: sourcePeriod,
-      lineItems: [{ type: "Rent", description: "Historical rent", amount: 900 }],
-      previousBalance: 0,
-      credits: 0,
-      payments: [],
-      status: "open",
-      updatedAt: "2000-01-01T00:00:00.000Z",
-    });
-    // Synthetic Playwright fixture data stays inside this isolated test browser context.
-    // lgtm[js/clear-text-storage-of-sensitive-data]
+  const lockedTargetFixture = makeSmokeState({
+    closedPeriods: [{ label: expectedRentPeriod }, { label: expectedUtilityPeriod }],
+    invoices: [
+      makeSmokeInvoice({
+        id: "locked-target-edit",
+        tenantId: "brenda",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2000-01-0001",
+        billingPeriod: historicalPeriod,
+        amount: 900,
+        issueDate: "2000-01-01",
+        dueDate: "2000-01-05",
+        updatedAt: "2000-01-01T00:00:00.000Z",
+      }),
+    ],
+  });
+  await page.evaluate((state) => {
     localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
-  }, historicalPeriod);
+  }, lockedTargetFixture);
   await page.reload({ waitUntil: "networkidle" });
   await page.click('[data-view="invoices"]');
   await page.locator('#invoiceHistory [data-load-invoice="locked-target-edit"]').click();
