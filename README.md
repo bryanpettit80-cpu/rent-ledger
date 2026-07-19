@@ -17,7 +17,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 - Shows an Operations Dashboard with billing health checks, overdue balances, and next actions.
 - Creates all remaining rent invoices for the current cycle from the Rent workflow.
 - Creates all remaining utility invoices for the current cycle from one utility calculation.
-- Creates security deposit invoices for active tenants with saved deposit amounts.
+- Creates one security deposit invoice for each active tenant with a saved deposit amount.
 - Supports lease-based occupancy-unit allocation and older equal-split utility invoices.
 - Shows a live invoice preview before printing or saving.
 - Prints invoices to paper or PDF through the browser.
@@ -76,7 +76,7 @@ The app sets the current rent cycle automatically:
 - Beginning on the 11th, the current rent cycle moves to the next calendar month.
 - Rent invoices use the current rent cycle as the billing period.
 - Utility invoices use the immediately preceding rent cycle as the billing period.
-- Security deposit invoices use the current rent cycle as the billing period.
+- New security deposit invoices use the current rent cycle as their billing period, but issuance is one-time per tenant across all periods.
 - Rent and utility invoices are due on the 1st day of the rent cycle month.
 - Generated invoice numbers include the two-digit billing month.
 
@@ -118,7 +118,9 @@ Security deposit invoices:
 - Use invoice numbers like `DEP-2026-07-0001`.
 - Use the tenant's saved security deposit amount.
 - Hide the utility calculator.
-- Show active tenants with a saved deposit amount first so you can create one missing deposit invoice or use `Create all security deposits`.
+- Show active tenants with a saved deposit amount so you can create their one missing deposit invoice or use `Create all security deposits`.
+- Count any prior security deposit invoice as issued, regardless of billing period or whether it is open, partially paid, or paid.
+- Prevent another deposit invoice for the same tenant while the original issuance record exists.
 - Keep `Apply charge` inside `Edit charges` for the rare case where you need to refresh the deposit line from the selected tenant's current profile.
 
 ### Editing Charges And Preview
@@ -142,11 +144,13 @@ Use `Mark paid` from a saved invoice card or workflow row to open the payment po
 
 Credits or adjustments reduce the balance before payment recording. If a $200 tenant payment is entered as a credit, do not also record that same $200 through `Mark paid`; the payment popup only accepts amounts up to the remaining balance due.
 
+`Delete paid non-deposit invoices` keeps paid security deposit invoices because they are the tenant's one-time issuance record. Deleting an individual security deposit invoice remains available for correcting a true mistake, but the app warns that doing so may make the deposit appear missing again.
+
 ## Operations Dashboard
 
 The Overview screen includes an operations section for day-to-day review:
 
-- Billing Health checks active tenants, missing emails, zero rent amounts, utility allocation setup, duplicate tenant/type/period invoices, paid invoices with remaining balances, overdue open balances, and whether reviewed periods are locked.
+- Billing Health checks active tenants, missing emails, zero rent amounts, utility allocation setup, duplicate tenant/type/period invoices or repeated one-time deposits, paid invoices with remaining balances, overdue open balances, and whether reviewed periods are locked.
 - Next actions routes directly to Rent, Utilities, Security Deposits, Invoices, or the current-cycle lock action.
 - Open Balances lists overdue invoices with quick access to open the invoice, copy a tenant message, or record payment.
 - Communication drafts generate local message text for open invoices. The app prepares the draft, but it does not send email.
@@ -156,9 +160,15 @@ The Overview screen includes an operations section for day-to-day review:
 Use `Settings` > `Closed Periods` after a billing cycle has been reviewed.
 
 - `Lock current cycle` locks the current rent/security period and the related utility period.
-- Creating, editing, deleting, marking paid, or reopening invoices in a locked period requires confirmation.
-- `Unlock current cycle` removes the confirmation guard for the current rent/security and utility periods.
+- A lock is a workflow safeguard, not a password, permission, or hard accounting close. Creating, editing, deleting, marking paid, or reopening invoices in a locked period remains possible after an extra confirmation.
+- Editing an invoice checks both its saved billing period and the newly selected billing period, so moving an invoice into or out of a locked period cannot bypass the confirmation.
+- `Unlock current cycle` removes the guard only from the current rent/security and utility periods. Every locked period also has `Unlock this period`, which safely unlocks an older period after its own confirmation.
+- Locks stay in place across reloads and ordinary saves until you explicitly unlock them. There is no timeout or automatic relock. Loading a full Drive state, importing a full backup, or restoring a local backup intentionally applies the lock snapshot from that replacement data.
 - Closed periods are stored in the local app state, included in JSON backups, and included when the state is uploaded to Google Drive.
+- A dedicated browser lock record synchronizes period safeguards across other open Rent Ledger tabs. Lock changes refresh only the lock and Overview displays; invoice drafts, tenant forms, and landlord settings in those tabs are left untouched.
+- A full Drive/import/restore replacement publishes a separate browser marker. Other open tabs keep their form text for review, but a later Save is refused and reloads the replacement state instead of rolling it back.
+- Drive state replacements and invoice PDF batches share one cross-tab operation lock. A batch rechecks the replacement marker around every PDF, so an older tab cannot continue an artifact upload after replacement data takes authority.
+- General tenant, invoice, and landlord data is not merged across tabs. Finish data entry in one tab at a time; this lock synchronization is not multi-user conflict resolution.
 
 ## CSV Exports
 
@@ -270,7 +280,9 @@ The invoice screen has one `Save` button. It saves the current invoice to the br
 Rent Ledger/Invoices/
 ```
 
-The Rent workflow's `Create all rent invoices` button, the Utility workflow's `Create all utilities` button, and the Security Deposits workflow's `Create all security deposits` button create all missing invoices locally first, then upload the updated state and each generated PDF to Drive when Drive is connected.
+The Rent workflow's `Create all rent invoices` button, the Utility workflow's `Create all utilities` button, and the Security Deposits workflow's `Create all security deposits` button create all missing invoices locally first, then upload the updated state and each generated PDF to Drive when Drive is connected. Rent and utility completeness is scoped to the current cycle; security deposit completeness searches all saved invoice history because each tenant should receive that invoice only once.
+
+Drive uploads verify that saved invoice, tenant, and landlord data did not change while a PDF request was in flight. If it did, the batch stops without labeling the older PDF as current, and Drive state JSON retries with the newest saved browser state.
 
 After Drive has been connected once, the app remembers that connection after a refresh. It does not permanently store the Google access token, and it does not ask Google for a new token just because the page refreshed.
 

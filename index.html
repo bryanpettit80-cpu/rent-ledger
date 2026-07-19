@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v35" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v36" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v35" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v36" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,11 +23,11 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v35</strong>
+              <strong id="splashVersion">rent-ledger-v36</strong>
             </div>
             <div>
               <span>Commit date</span>
-              <strong id="splashCommitDate">July 9, 2026</strong>
+              <strong id="splashCommitDate">July 18, 2026</strong>
             </div>
           </div>
           <button class="primary-button" id="enterApp" type="button">Open dashboard</button>
@@ -136,7 +136,7 @@
             <section class="panel">
               <div class="panel-header compact">
                 <div>
-                  <p class="eyebrow">Cycle progress</p>
+                  <p class="eyebrow">Billing progress</p>
                   <h2>Remaining Work</h2>
                 </div>
               </div>
@@ -150,7 +150,7 @@
                   <div class="overview-list" id="cycleMissingUtilities"></div>
                 </div>
                 <div>
-                  <h3>Missing security deposits</h3>
+                  <h3>Missing security deposit invoices</h3>
                   <div class="overview-list" id="cycleMissingSecurityDeposits"></div>
                 </div>
               </div>
@@ -203,10 +203,10 @@
           <section class="panel cycle-workflow-panel" id="securityDepositBatchPanel" hidden>
             <div class="panel-header">
               <div>
-                <p class="eyebrow">Security deposit cycle</p>
-                <h1 id="securityDepositBatchHeading">Security Deposits</h1>
+                <p class="eyebrow">One-time tenant charges</p>
+                <h1 id="securityDepositBatchHeading">Security Deposit Invoices</h1>
                 <p class="panel-copy" id="securityDepositBatchCopy">
-                  Review active tenants before creating security deposit invoices.
+                  Each tenant needs one security deposit invoice, regardless of its billing period or payment status.
                 </p>
               </div>
               <button class="primary-button" id="createAllSecurityDepositInvoices" type="button">
@@ -422,7 +422,7 @@
                 <h1 id="invoicesHeading">Invoices</h1>
                 <p class="panel-copy">Review saved invoices, reopen prior invoices, or mark paid invoices.</p>
               </div>
-              <button class="small-button danger" id="clearPaid" type="button">Delete paid invoices</button>
+              <button class="small-button danger" id="clearPaid" type="button">Delete paid non-deposit invoices</button>
             </div>
             <div class="invoice-history invoices-page-list" id="invoiceHistory"></div>
           </section>
@@ -657,7 +657,9 @@
                   <p class="eyebrow">Controls</p>
                   <h2>Closed Periods</h2>
                   <p class="backup-copy">
-                    Lock reviewed billing periods so invoice edits, deletes, and payment changes require confirmation.
+                    Locks are workflow safeguards, not access controls. Changes remain possible after an extra confirmation.
+                    Lock the current rent/security and utility periods together, or unlock any listed period individually.
+                    Lock changes sync across open tabs without replacing their invoice, tenant, or landlord forms.
                   </p>
                 </div>
                 <div class="button-row">
@@ -695,6 +697,6 @@
       </div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v35" defer></script>
+    <script src="app.js?v=rent-ledger-v36" defer></script>
   </body>
 </html>

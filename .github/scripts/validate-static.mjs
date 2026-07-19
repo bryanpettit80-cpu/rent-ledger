@@ -94,6 +94,10 @@ assert(files.html.includes('id="auditTrailList"'), "Settings must include the lo
 assert(files.html.includes('id="exportInvoiceCsv"'), "Settings must include invoice CSV export.");
 assert(files.html.includes('id="lockCurrentCycle"'), "Settings must include current-cycle lock controls.");
 assert(files.html.includes('id="closedPeriodList"'), "Settings must show closed periods.");
+assert(
+  files.html.includes("Locks are workflow safeguards, not access controls"),
+  "Settings must explain that closed periods are confirmation safeguards rather than access controls."
+);
 assert(!files.html.includes("Save connection settings"), "Settings must not include the removed Save connection settings button.");
 assert(!files.html.includes('id="markPaid"'), "Invoice editor must not include the old header Mark paid button.");
 assert(!files.html.includes('id="newInvoice"'), "Invoice editor must not include the old Start new button.");
@@ -103,6 +107,20 @@ assert(files.app.includes("function applyRentCharge"), "app.js must define apply
 assert(files.app.includes("async function createAllRentInvoices"), "app.js must define the rent batch flow.");
 assert(files.app.includes("async function batchCreateUtilityInvoices"), "app.js must define the utility batch flow.");
 assert(files.app.includes("async function createAllSecurityDepositInvoices"), "app.js must define the security deposit batch flow.");
+assert(files.app.includes("function securityDepositInvoiceForTenant"), "Security deposit issuance must search saved invoice history.");
+assert(
+  files.app.includes("sortInvoicesByNewest(state.invoices).forEach((invoice) =>") &&
+    files.app.includes("securityDepositInvoiceByTenantId.set(invoice.tenantId, invoice)"),
+  "Current-cycle summary must index security deposit issuance from all saved invoices."
+);
+assert(
+  files.app.includes("securityDepositInvoiceForTenant(invoice.tenantId, currentCycleSummary(), invoice.id)"),
+  "Manual invoice saves must prevent repeated security deposit issuance."
+);
+assert(
+  files.app.includes("Paid security deposit invoices are retained as one-time issuance records."),
+  "Bulk paid-invoice cleanup must retain security deposit issuance records."
+);
 assert(files.app.includes("function recordInvoicePayment"), "app.js must define invoice payment recording.");
 assert(files.app.includes("function openPaymentDialog"), "app.js must open the payment dialog from Mark paid.");
 assert(files.app.includes("function paymentDialogCopy"), "Payment dialog must explain charges, credits, payments, and balance.");
@@ -142,6 +160,14 @@ assert(files.app.includes("function exportTenantStatementCsv"), "app.js must inc
 assert(files.app.includes("function recordAuditEvent"), "app.js must record a local audit trail.");
 assert(files.app.includes("function normalizeClosedPeriods"), "app.js must persist closed billing periods.");
 assert(files.app.includes("function confirmLockedInvoiceChange"), "app.js must guard locked-period invoice changes.");
+assert(files.app.includes("data-unlock-period"), "Each locked billing period must expose an individual unlock action.");
+assert(
+  files.app.includes('const CLOSED_PERIODS_KEY = "rent-ledger:closed-periods:v1"') &&
+  files.app.includes('const STATE_REPLACEMENT_KEY = "rent-ledger:state-replacement:v1"') &&
+  files.app.includes('window.addEventListener("storage", handleStorageChange)') &&
+    files.app.includes("function handleStorageChange"),
+  "Open tabs must synchronize a dedicated canonical closed-period record."
+);
 assert(
   files.app.includes("confirmLockedInvoiceChange(invoice, `create this ${invoiceTypeLabel(invoice.invoiceType).toLowerCase()} invoice`)"),
   "Generated current-cycle invoices must require locked-period confirmation before they are saved."
@@ -152,8 +178,8 @@ assert(files.app.includes("auditEvents: normalizeAuditEvents"), "State normaliza
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
 assert(files.serviceWorker.includes('fetch(request, { cache: "no-store" })'), "sw.js network-first requests should bypass stale HTTP cache.");
 assert(
-  files.app.includes("markInvoiceDriveSaved(invoice.id, file, { write: false });") &&
-    files.app.includes('writeLocalState("Saved invoice to Drive");'),
+  files.app.includes("markInvoiceDriveSaved(artifact.id, artifact.file, { write: false, updateDraft: false })") &&
+    files.app.includes('writeLocalState(invoiceList.length === 1 ? "Saved invoice to Drive" : "Saved invoices to Drive")'),
   "Drive state should be updated after invoice PDF metadata is recorded."
 );
 
@@ -168,6 +194,175 @@ const invoicePushIndex = createCycleInvoiceSource.indexOf("state.invoices.push(i
 assert(
   lockedConfirmationIndex >= 0 && invoicePushIndex > lockedConfirmationIndex,
   "Generated invoice creation must confirm locked periods before pushing invoices into state."
+);
+const persistInvoiceSource = extractFunction(files.app, "persistCurrentInvoice");
+assert(
+  persistInvoiceSource.includes("[existingInvoice, invoice]") &&
+    persistInvoiceSource.indexOf("confirmLockedInvoiceChange") < persistInvoiceSource.indexOf("state.invoices[existingIndex] = invoice"),
+  "Invoice edits must confirm locks on both the saved period and the submitted target period before mutation."
+);
+const storageHandlerSource = extractFunction(files.app, "handleStorageChange");
+assert(
+  storageHandlerSource.includes("event.key !== CLOSED_PERIODS_KEY") &&
+    storageHandlerSource.includes("refreshCanonicalClosedPeriods()") &&
+    storageHandlerSource.includes("renderPeriodLocks(summary)") &&
+    storageHandlerSource.includes("renderOverview(summary)") &&
+    !storageHandlerSource.includes("stateFromStorageValue") &&
+    !storageHandlerSource.includes("fillTenantForm") &&
+    !storageHandlerSource.includes("fillLandlordForm"),
+  "Cross-tab lock updates must refresh only closed periods and their UI without replacing general state or forms."
+);
+assert(
+  files.app.includes("state.closedPeriods = options.persistClosedPeriods") &&
+    files.app.includes("persistCanonicalClosedPeriods(state.closedPeriods)") &&
+    files.app.includes(": refreshCanonicalClosedPeriods();"),
+  "Ordinary state writes must merge canonical locks while explicit replacements may persist their lock snapshot."
+);
+assert(
+  files.app.includes('saveState("Loaded from Google Drive", { persistClosedPeriods: true, stateReplacement: true })') &&
+    files.app.includes('saveState("Imported backup", { persistClosedPeriods: true, stateReplacement: true })') &&
+    files.app.includes('saveState("Restored local backup", { persistClosedPeriods: true, stateReplacement: true })'),
+  "Drive load, full import, and local restore must replace locks and publish a state-replacement marker."
+);
+const saveStateSource = files.app.slice(
+  files.app.indexOf("function saveState"),
+  files.app.indexOf("function writeLocalState")
+);
+assert(
+  saveStateSource.includes("stateReplacementIsPending()") &&
+    saveStateSource.indexOf("stateReplacementIsPending()") < saveStateSource.indexOf("writeLocalState(reason, options)") &&
+    saveStateSource.includes("reloadAfterExternalStateReplacement()") &&
+    saveStateSource.includes("return false"),
+  "Ordinary saves must refuse a stale write after another tab fully replaces state."
+);
+assert(
+  storageHandlerSource.includes("event.key === STATE_REPLACEMENT_KEY") &&
+    storageHandlerSource.includes("externalReplacementPending = true") &&
+    !storageHandlerSource.includes("reloadAfterExternalStateReplacement"),
+  "Replacement events must preserve open forms while marking the tab stale."
+);
+const initialStateSource = files.app.slice(files.app.indexOf("let state;"), files.app.indexOf("let appSettings"));
+assert(
+  initialStateSource.includes('window.addEventListener("storage", handleStorageChange)') &&
+    initialStateSource.indexOf('window.addEventListener("storage", handleStorageChange)') <
+      initialStateSource.indexOf("readConsistentStateSnapshot()") &&
+    initialStateSource.includes("observedStateReplacementToken = initialStateSnapshot.token") &&
+    extractFunction(files.app, "reloadAfterExternalStateReplacement").includes("readConsistentStateSnapshot()"),
+  "Startup and stale-state reloads must sample state with its replacement marker after registering the storage listener."
+);
+const writeLocalStateSource = files.app.slice(
+  files.app.indexOf("function writeLocalState"),
+  files.app.indexOf("function mergeLatestAuditEvents")
+);
+assert(
+  writeLocalStateSource.includes("mergeLatestAuditEvents()") &&
+    writeLocalStateSource.includes("stateReplacementIsPending()") &&
+    writeLocalStateSource.includes("reloadAfterExternalStateReplacement()") &&
+    writeLocalStateSource.includes("publishStateReplacement(reason)") &&
+    writeLocalStateSource.indexOf('localStorage.setItem(STORAGE_KEY, JSON.stringify(state))') <
+      writeLocalStateSource.indexOf("publishStateReplacement(reason)"),
+  "Ordinary writes must merge audit history, and full replacement markers must publish after the authoritative state."
+);
+const driveUploadSource = files.app.slice(
+  files.app.indexOf("async function uploadDriveState"),
+  files.app.indexOf("async function uploadInvoicePdf")
+);
+assert(
+  driveUploadSource.includes("return withDriveStateLock(upload)") &&
+    driveUploadSource.includes('navigator.locks.request("rent-ledger-drive-state", callback)') &&
+    driveUploadSource.includes("prepareCurrentStateForDriveUpload()") &&
+    driveUploadSource.includes("finishDriveStateUpload(replacementRetry, uploadedStateRevision)") &&
+    driveUploadSource.includes("stateWriteRevision !== uploadedStateRevision") &&
+    driveUploadSource.includes("uploadDriveStateWithCurrentData(replacementRetry + 1)"),
+  "Drive state uploads must serialize across tabs and retry after replacement or same-tab state changes."
+);
+const driveArtifactSource = files.app.slice(
+  files.app.indexOf("async function saveInvoiceArtifactsToDrive"),
+  files.app.indexOf("async function loadStateFromDrive")
+);
+assert(
+  driveArtifactSource.includes("withDriveStateLock(saveArtifacts)") &&
+    driveArtifactSource.includes("uploadDriveStateWithCurrentData()") &&
+    driveArtifactSource.includes("for (const invoice of invoiceList)") &&
+    driveArtifactSource.includes("invoiceArtifactFingerprint(currentInvoice)") &&
+    driveArtifactSource.includes("stateWriteRevision !== transactionRevision") &&
+    driveArtifactSource.indexOf("uploadedArtifacts.push") < driveArtifactSource.indexOf("markInvoiceDriveSaved") &&
+    driveArtifactSource.includes("if (!prepareCurrentStateForDriveUpload()) return null;") &&
+    driveArtifactSource.indexOf("await uploadInvoicePdf") <
+      driveArtifactSource.lastIndexOf("if (!prepareCurrentStateForDriveUpload()) return null;"),
+  "Invoice PDF batches must lock, verify source revisions around each upload, and delay metadata until the batch stays current."
+);
+const saveInvoiceSource = extractFunction(files.app, "saveInvoice");
+assert(
+  saveInvoiceSource.includes("uploadDraftRevision") &&
+    saveInvoiceSource.includes("draftEditRevision !== uploadDraftRevision") &&
+    driveArtifactSource.includes("updateDraft: false") &&
+    driveArtifactSource.includes("draftEditRevision === startingDraftRevision"),
+  "An asynchronous Drive upload must preserve newer unsaved invoice-form edits instead of relabeling or replacing the draft."
+);
+const driveSettingsSource = files.app.slice(
+  files.app.indexOf("function saveDriveSettings"),
+  files.app.indexOf("function renderDriveStatus")
+);
+assert(
+  driveSettingsSource.includes("const previousAutoSync = Boolean(appSettings.driveAutoSync)") &&
+    driveSettingsSource.includes("!previousAutoSync && appSettings.driveAutoSync && driveAccessToken"),
+  "Saving Drive fields must queue auto-sync only when auto-sync is newly enabled, not after every upload."
+);
+const driveLoadSource = files.app.slice(
+  files.app.indexOf("async function loadStateFromDrive"),
+  files.app.indexOf("async function uploadDriveState")
+);
+assert(
+  driveLoadSource.includes("clearTimeout(driveSyncTimer)") &&
+    driveLoadSource.includes("withDriveStateLock(load)"),
+  "Drive download must cancel queued uploads and share the cross-tab Drive-state lock."
+);
+const fullImportSource = extractFunction(files.app, "importBackup");
+const localRestoreSource = extractFunction(files.app, "restoreLatestBackup");
+assert(
+  fullImportSource.includes("await withDriveStateLock") && localRestoreSource.includes("await withDriveStateLock"),
+  "Full backup imports and local restores must share the Drive-state lock with artifact uploads."
+);
+const canonicalReadSource = files.app.slice(
+  files.app.indexOf("function readCanonicalClosedPeriods"),
+  files.app.indexOf("function persistCanonicalClosedPeriods")
+);
+assert(
+  canonicalReadSource.includes('localStorage.setItem(CLOSED_PERIODS_KEY, JSON.stringify(closedPeriods))') &&
+    canonicalReadSource.includes("Unable to repair canonical closed periods"),
+  "Malformed canonical lock data must self-heal from the normalized state fallback."
+);
+assert(
+  files.app.includes('`Locked billing period${added.length === 1 ? "" : "s"} ${added.join(" and ")}`') &&
+    files.app.includes('`Unlocked billing period${removedPeriods.length === 1 ? "" : "s"}'),
+  "Current-cycle lock audit entries must include the exact affected billing-period labels."
+);
+const lockedChangeSource = extractFunction(files.app, "confirmLockedInvoiceChange");
+assert(
+  lockedChangeSource.indexOf("refreshCanonicalClosedPeriods()") < lockedChangeSource.indexOf("lockedInvoicePeriods(invoices)"),
+  "Locked invoice confirmation must synchronously refresh canonical locks before evaluating source and target periods."
+);
+const paymentSource = extractFunction(files.app, "recordInvoicePayment");
+assert(
+  paymentSource.indexOf("confirmLockedInvoiceChange") < paymentSource.indexOf("invoice.payments ="),
+  "Payment recording must refresh and confirm canonical locks immediately before mutation."
+);
+const invoiceHistoryClickSource = extractFunction(files.app, "handleInvoiceHistoryClick");
+assert(
+  invoiceHistoryClickSource.indexOf("window.confirm(deleteMessage)") <
+    invoiceHistoryClickSource.indexOf('confirmLockedInvoiceChange(invoice, "delete this invoice")') &&
+    invoiceHistoryClickSource.indexOf('confirmLockedInvoiceChange(invoice, "delete this invoice")') <
+      invoiceHistoryClickSource.indexOf("state.invoices = state.invoices.filter"),
+  "Single-invoice deletion must make the refreshed lock safeguard the final confirmation before mutation."
+);
+const clearPaidSource = extractFunction(files.app, "clearPaidInvoices");
+assert(
+  clearPaidSource.indexOf("window.confirm") <
+    clearPaidSource.indexOf('confirmLockedInvoiceChange(deletablePaidInvoices, "delete these paid invoices")') &&
+    clearPaidSource.indexOf('confirmLockedInvoiceChange(deletablePaidInvoices, "delete these paid invoices")') <
+      clearPaidSource.indexOf("state.invoices = state.invoices.filter"),
+  "Bulk paid deletion must refresh locks after its destructive confirmation and before mutation."
 );
 assert(csvHarness.csvCell("=2+2") === "'=2+2", "CSV export must neutralize equals-led formula cells.");
 assert(csvHarness.csvCell("+SUM(1)") === "'+SUM(1)", "CSV export must neutralize plus-led formula cells.");
@@ -205,6 +400,10 @@ assert(files.readme.includes("Drive actions save the current OAuth client ID"), 
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
 assert(files.readme.includes("Create all security deposits"), "README must document the security deposit batch flow.");
+assert(
+  files.readme.includes("issuance is one-time per tenant across all periods"),
+  "README must document one-time historical security deposit issuance."
+);
 assert(files.readme.includes("RNT-2026-07-"), "README must document month-coded rent invoice numbers.");
 assert(files.readme.includes("UTL-2026-06-"), "README must document month-coded utility invoice numbers.");
 assert(files.readme.includes("DEP-2026-07-"), "README must document month-coded deposit invoice numbers.");
@@ -216,12 +415,42 @@ assert(files.readme.includes("Drive PDF metadata"), "README must explain saved-t
 assert(files.readme.includes("Credits or adjustments reduce the balance"), "README must explain credit and payment balance handling.");
 assert(files.readme.includes("Operations Dashboard"), "README must document the operations dashboard.");
 assert(files.readme.includes("Closed Periods"), "README must document closed-period controls.");
+assert(files.readme.includes("workflow safeguard, not a password"), "README must explain the lock security boundary.");
+assert(files.readme.includes("Unlock this period"), "README must document historical per-period unlocks.");
+assert(files.readme.includes("both its saved billing period and the newly selected billing period"), "README must document locked-target edit protection.");
+assert(files.readme.includes("dedicated browser lock record"), "README must document scoped cross-tab lock synchronization.");
+assert(files.readme.includes("invoice drafts, tenant forms, and landlord settings"), "README must explain which open-tab forms lock synchronization preserves.");
+assert(files.readme.includes("full Drive/import/restore replacement"), "README must explain stale-tab protection after full state replacement.");
+assert(
+  files.readme.includes("invoice PDF batches share one cross-tab operation lock"),
+  "README must explain Drive artifact and full-replacement serialization."
+);
 assert(files.readme.includes("CSV Exports"), "README must document report exports.");
 assert(files.readme.includes("Local Audit Trail"), "README must document the audit trail.");
 assert(files.readme.includes("Release Checklist"), "README must include the static release checklist.");
 assert(files.bumpVersion.includes("incrementVersion"), "Version bump helper must increment APP_VERSION.");
 assert(files.smokeTest.includes("long invoice PDF to paginate"), "Smoke test must cover multi-page invoice PDFs.");
 assert(files.smokeTest.includes("billingHealthScore"), "Smoke test must cover the operations dashboard.");
+assert(
+  files.smokeTest.includes("Prior-period paid and partial deposit invoices should leave 0 remaining"),
+  "Smoke test must cover paid and partial security deposit invoices from a prior period."
+);
+assert(
+  files.smokeTest.includes("Bulk paid cleanup must retain the paid security deposit invoice"),
+  "Smoke test must cover preservation of paid security deposit issuance records."
+);
+assert(
+  files.smokeTest.includes("A stale tab save must reload the authoritative replacement instead of overwriting it"),
+  "Smoke test must cover the stale-tab state-replacement save barrier."
+);
+assert(
+  files.smokeTest.includes("Drive operation lock should serialize replacement and artifact work across tabs"),
+  "Smoke test must cover cross-tab Drive operation serialization."
+);
+assert(
+  files.smokeTest.includes("Invoice artifact fingerprint should change when PDF source data changes"),
+  "Smoke test must cover invoice artifact source fingerprints."
+);
 
 if (failures.length) {
   console.error("Static validation failed:");
