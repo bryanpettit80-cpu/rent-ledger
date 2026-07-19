@@ -5,6 +5,7 @@ const files = {
   html: readFileSync("index.html", "utf8"),
   serviceWorker: readFileSync("sw.js", "utf8"),
   readme: readFileSync("README.md", "utf8"),
+  deployment: readFileSync("DEPLOYMENT.md", "utf8"),
   mobileLauncher: readFileSync("Start-Rent-Ledger-Mobile.ps1", "utf8"),
   bumpVersion: readFileSync(".github/scripts/bump-version.mjs", "utf8"),
   smokeTest: readFileSync(".github/scripts/smoke-test.mjs", "utf8"),
@@ -415,6 +416,21 @@ assert(
 );
 
 assert(files.readme.includes("Drive actions save the current OAuth client ID"), "README must explain Drive settings auto-save.");
+assert(
+  files.readme.includes("prefilled Google OAuth web client ID works only on an origin") &&
+    files.readme.includes("OAuth 2.0 client of type `Web application`") &&
+    files.readme.includes("Settings > Advanced Drive setup"),
+  "README must explain that each hosted origin needs an authorized Web application OAuth client."
+);
+assert(
+  files.deployment.includes("Upload to Drive") &&
+    files.deployment.includes("stop entering or editing data on the old origin") &&
+    files.deployment.includes("both the old origin and the new dedicated origin") &&
+    files.deployment.includes("same OAuth client ID") &&
+    files.deployment.includes("Download from Drive") &&
+    files.deployment.includes("tenants, saved invoices, balances, closed periods, and period locks"),
+  "Deployment guide must document the old-origin to new-origin Drive migration and verification sequence."
+);
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
 assert(files.readme.includes("Create all security deposits"), "README must document the security deposit batch flow.");
