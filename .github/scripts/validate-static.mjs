@@ -277,9 +277,9 @@ assert(
   driveUploadSource.includes("return withDriveStateLock(upload)") &&
     driveUploadSource.includes('navigator.locks.request("rent-ledger-drive-state", callback)') &&
     driveUploadSource.includes("prepareCurrentStateForDriveUpload()") &&
-    driveUploadSource.includes("finishDriveStateUpload(replacementRetry, uploadedStateRevision)") &&
+    driveUploadSource.includes("finishDriveStateUpload(replacementRetry, uploadedStateRevision, options)") &&
     driveUploadSource.includes("stateWriteRevision !== uploadedStateRevision") &&
-    driveUploadSource.includes("uploadDriveStateWithCurrentData(replacementRetry + 1)"),
+    driveUploadSource.includes("uploadDriveStateWithCurrentData(replacementRetry + 1, options)"),
   "Drive state uploads must serialize across tabs and retry after replacement or same-tab state changes."
 );
 const driveArtifactSource = files.app.slice(
@@ -323,6 +323,18 @@ assert(
   driveLoadSource.includes("clearTimeout(driveSyncTimer)") &&
     driveLoadSource.includes("withDriveStateLock(load)"),
   "Drive download must cancel queued uploads and share the cross-tab Drive-state lock."
+);
+const driveImportSource = extractFunction(files.app, "importDriveStateFile");
+assert(
+  driveImportSource.includes("const imported = await fetchDriveState") &&
+    driveImportSource.includes("if (!stateSaved) return false") &&
+    driveImportSource.indexOf("const imported = await fetchDriveState") <
+      driveImportSource.indexOf('saveState("Loaded from Google Drive"') &&
+    driveImportSource.indexOf('saveState("Loaded from Google Drive"') <
+      driveImportSource.indexOf("appSettings.driveStateModifiedTime") &&
+    driveImportSource.indexOf("appSettings.driveStateModifiedTime") <
+      driveImportSource.indexOf("localStorage.setItem(APP_SETTINGS_KEY"),
+  "Drive download metadata must be trusted only after the remote state is fetched and saved locally."
 );
 const fullImportSource = extractFunction(files.app, "importBackup");
 const localRestoreSource = extractFunction(files.app, "restoreLatestBackup");
