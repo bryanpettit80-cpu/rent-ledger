@@ -78,6 +78,12 @@ assert(files.html.includes('id="createAllUtilityInvoices"'), "Utility workflow m
 assert(files.html.includes('data-view="security"'), "Navigation must include the Security Deposits page.");
 assert(files.html.includes('id="securityDepositBatchPanel"'), "Security Deposits workflow must include the deposit cycle panel.");
 assert(files.html.includes('id="createAllSecurityDepositInvoices"'), "Security Deposits workflow must include the deposit batch button.");
+const cycleInvoiceSource = extractFunction(files.app, "createCycleInvoiceForTenant");
+assert(
+  cycleInvoiceSource.includes("const duplicateCheckSummary = currentCycleSummary();") &&
+    cycleInvoiceSource.includes("options.findExisting(tenant.id, duplicateCheckSummary)"),
+  "Cycle invoice creation must refresh duplicate checks so batch-created invoices block duplicate tenant IDs."
+);
 assert(files.html.includes('id="tenantSecurityDeposit"'), "Tenant profile must include a security deposit field.");
 assert(files.html.includes('id="paymentDialog"'), "Saved invoices must use a payment popup for full or partial payments.");
 assert(files.html.includes('id="paymentPartial"'), "Payment popup must include a Partial button.");
