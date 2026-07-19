@@ -2,12 +2,6 @@
 
 Rent Ledger is a local-first invoice app for landlords who need to create rent invoices and utility reimbursement invoices for tenants. It runs in desktop and mobile browsers and can be hosted as a static site.
 
-Live app:
-
-```text
-https://bryanpettit80-cpu.github.io/rent-ledger/
-```
-
 ## What It Does
 
 - Creates separate `Rent invoice`, `Utility invoice`, and `Security Deposit invoice` records.
@@ -36,13 +30,7 @@ https://bryanpettit80-cpu.github.io/rent-ledger/
 
 ## Quick Start
 
-Open the hosted app:
-
-```text
-https://bryanpettit80-cpu.github.io/rent-ledger/
-```
-
-Or run it locally on this computer:
+Run it locally on this computer:
 
 ```text
 Start-Rent-Ledger.cmd
@@ -246,12 +234,12 @@ Inactive tenants:
 
 ## Google Drive Sync
 
-Google Drive sync is optional. The hosted app is preconfigured with a Google OAuth web client ID, and `Settings` lets you replace it if you create a new Google Cloud project later.
+Google Drive sync is optional. A prefilled Google OAuth web client ID works only on an origin that its Google Cloud configuration already authorizes. If you deploy Rent Ledger at a new custom origin, create or select a Google OAuth 2.0 client of type `Web application`, add the exact origin (scheme, host, and optional port) to its **Authorized JavaScript origins**, and paste that client ID into **Settings > Advanced Drive setup** before connecting Drive.
 
-The OAuth client must allow this JavaScript origin:
+The OAuth client must allow the dedicated JavaScript origin where you host Rent Ledger, for example:
 
 ```text
-https://bryanpettit80-cpu.github.io
+https://ledger.example.com
 ```
 
 The client ID must look like:
@@ -264,7 +252,7 @@ Do not paste a Google account email, project ID, API key, or client secret. Thos
 
 In `Settings`:
 
-1. Leave the prefilled Google OAuth client ID in place unless you created a replacement.
+1. Confirm the OAuth client ID is authorized for this exact origin. Replace it under `Advanced Drive setup` when you deploy at a different origin.
 2. Use `Connect Drive` to grant Google Drive access.
 3. Use `Download from Drive` to replace this browser's data with the Drive copy.
 4. Use `Upload to Drive` to upload this browser's current data to Drive.
@@ -381,11 +369,7 @@ If the type is correct but the layout is stale, close and reopen the app.
 
 ### My phone cannot open the local URL
 
-Use the hosted GitHub Pages URL for access anywhere:
-
-```text
-https://bryanpettit80-cpu.github.io/rent-ledger/
-```
+For access anywhere, host Rent Ledger over HTTPS on a dedicated origin as described in `DEPLOYMENT.md`. Avoid entering production data on a shared `https://<user>.github.io/...` project URL because other pages on that origin can access the same browser `localStorage`.
 
 For local phone access, make sure:
 
