@@ -5,7 +5,7 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v37";
+  const APP_VERSION = "rent-ledger-v38";
   const APP_COMMIT_DATE = "July 19, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -405,7 +405,7 @@
     els.driveAutoSync.addEventListener("change", () => saveDriveSettings(false));
     els.connectDrive.addEventListener("click", connectDrive);
     els.loadDriveState.addEventListener("click", loadStateFromDrive);
-    els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual upload"));
+    els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual upload", { allowConflictConfirmation: true }));
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.printInvoice.addEventListener("click", () => window.print());
@@ -2667,6 +2667,7 @@
       appSettings.driveFolderId = "";
       appSettings.driveInvoiceFolderId = "";
       appSettings.driveStateFileId = "";
+      appSettings.driveStateModifiedTime = "";
       appSettings.driveRemembered = false;
     }
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
@@ -3193,6 +3194,7 @@
         driveFolderId: String(parsed.driveFolderId || "").trim(),
         driveInvoiceFolderId: String(parsed.driveInvoiceFolderId || "").trim(),
         driveStateFileId: String(parsed.driveStateFileId || "").trim(),
+        driveStateModifiedTime: String(parsed.driveStateModifiedTime || "").trim(),
       };
     } catch (error) {
       console.warn("Unable to load Rent Ledger settings.", error);
@@ -3203,6 +3205,7 @@
         driveFolderId: "",
         driveInvoiceFolderId: "",
         driveStateFileId: "",
+        driveStateModifiedTime: "",
       };
     }
   }
@@ -3721,21 +3724,22 @@
     }, DRIVE_SYNC_DEBOUNCE_MS);
   }
 
-  async function saveStateToDrive(reason = "Saved") {
+  async function saveStateToDrive(reason = "Saved", options = {}) {
     saveDriveSettings(false);
     if (!(await ensureDriveAccess("saving"))) return;
 
     try {
       renderDriveStatus("Uploading app data to Drive...");
-      if (!(await uploadDriveState())) return;
+      if (!(await uploadDriveState(options))) return;
       renderDriveStatus(`${reason}: app data uploaded to Drive.`);
       showToast("Saved to Google Drive.");
     } catch (error) {
       if (String(error.message || error).includes("404")) {
         appSettings.driveStateFileId = "";
+        appSettings.driveStateModifiedTime = "";
         localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
         try {
-          if (!(await uploadDriveState())) return;
+          if (!(await uploadDriveState(options))) return;
           renderDriveStatus(`${reason}: app data uploaded to Drive.`);
           showToast("Saved to Google Drive.");
         } catch (retryError) {
@@ -3889,17 +3893,11 @@
           return;
         }
 
-        appSettings.driveStateFileId = file.id;
-        localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
-        const imported = await driveApi(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
-        refreshCanonicalClosedPeriods();
-        recordLocalBackup("Before Drive load", state);
-        state = normalizeState(imported);
-        selectedTenantId = firstActiveTenantId() || "";
-        selectedInvoiceId = "";
-        draft = createBlankInvoice(selectedTenantId);
-        cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
-        saveState("Loaded from Google Drive", { persistClosedPeriods: true, stateReplacement: true });
+        if (!(await importDriveStateFile(file))) {
+          renderDriveStatus("Drive load stopped because newer local data was kept.");
+          showToast("Google Drive load was not applied.");
+          return;
+        }
         fillLandlordForm();
         fillTenantForm(selectedTenantId);
         renderAll();
@@ -3915,8 +3913,26 @@
     await withDriveStateLock(load);
   }
 
-  async function uploadDriveState() {
-    const upload = () => uploadDriveStateWithCurrentData();
+  async function importDriveStateFile(file, fetchDriveState = driveApi) {
+    const imported = await fetchDriveState(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+    refreshCanonicalClosedPeriods();
+    recordLocalBackup("Before Drive load", state);
+    state = normalizeState(imported);
+    selectedTenantId = firstActiveTenantId() || "";
+    selectedInvoiceId = "";
+    draft = createBlankInvoice(selectedTenantId);
+    cycleUtilityCalculation = normalizeUtilityCalculation(draft.utilityCalculation);
+    const stateSaved = saveState("Loaded from Google Drive", { persistClosedPeriods: true, stateReplacement: true });
+    if (!stateSaved) return false;
+
+    appSettings.driveStateFileId = file.id;
+    appSettings.driveStateModifiedTime = file.modifiedTime || "";
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    return true;
+  }
+
+  async function uploadDriveState(options = {}) {
+    const upload = () => uploadDriveStateWithCurrentData(0, options);
     return withDriveStateLock(upload);
   }
 
@@ -3927,7 +3943,7 @@
     return callback();
   }
 
-  async function uploadDriveStateWithCurrentData(replacementRetry = 0) {
+  async function uploadDriveStateWithCurrentData(replacementRetry = 0, options = {}) {
     if (!prepareCurrentStateForDriveUpload()) return false;
     const folderId = await ensureDriveFolder();
     let fileId = appSettings.driveStateFileId;
@@ -3941,14 +3957,17 @@
     const uploadedStateRevision = stateWriteRevision;
     const body = JSON.stringify(state, null, 2);
     if (fileId) {
-      await driveApi(`/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,modifiedTime`, {
+      const metadata = await getDriveFileMetadata(fileId);
+      if (!confirmDriveStateOverwrite(metadata, options)) return false;
+      const updated = await driveApi(`/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,modifiedTime`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body,
       });
       appSettings.driveStateFileId = fileId;
+      appSettings.driveStateModifiedTime = updated.modifiedTime || metadata.modifiedTime || "";
       localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
-      return finishDriveStateUpload(replacementRetry, uploadedStateRevision);
+      return finishDriveStateUpload(replacementRetry, uploadedStateRevision, options);
     }
 
     const upload = multipartDriveBody(
@@ -3965,17 +3984,18 @@
       body: upload.body,
     });
     appSettings.driveStateFileId = created.id || "";
+    appSettings.driveStateModifiedTime = created.modifiedTime || "";
     localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
-    return finishDriveStateUpload(replacementRetry, uploadedStateRevision);
+    return finishDriveStateUpload(replacementRetry, uploadedStateRevision, options);
   }
 
-  async function finishDriveStateUpload(replacementRetry, uploadedStateRevision) {
+  async function finishDriveStateUpload(replacementRetry, uploadedStateRevision, options = {}) {
     const replacementPending = stateReplacementIsPending();
     const stateChanged = stateWriteRevision !== uploadedStateRevision;
     if (!replacementPending && !stateChanged) return true;
     if (replacementPending) prepareCurrentStateForDriveUpload();
     if (replacementRetry >= 2) return false;
-    return uploadDriveStateWithCurrentData(replacementRetry + 1);
+    return uploadDriveStateWithCurrentData(replacementRetry + 1, options);
   }
 
   function prepareCurrentStateForDriveUpload() {
@@ -4076,9 +4096,35 @@
       spaces: "drive",
       pageSize: "1",
       fields: "files(id,name,mimeType,modifiedTime)",
+      orderBy: "modifiedTime desc",
     });
     const result = await driveApi(`/drive/v3/files?${params.toString()}`);
     return result.files?.[0] || null;
+  }
+
+  async function getDriveFileMetadata(fileId) {
+    return driveApi(`/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,modifiedTime`);
+  }
+
+  function confirmDriveStateOverwrite(file, options = {}) {
+    const remoteModifiedTime = String(file?.modifiedTime || "").trim();
+    const lastSyncedModifiedTime = String(appSettings.driveStateModifiedTime || "").trim();
+    if (!remoteModifiedTime || (lastSyncedModifiedTime && remoteModifiedTime === lastSyncedModifiedTime)) return true;
+
+    const message = lastSyncedModifiedTime
+      ? "Google Drive has a newer Rent Ledger backup. Load from Drive before uploading, or manually confirm replacement."
+      : "A Rent Ledger backup already exists in Google Drive. Load it before enabling auto-sync, or manually confirm replacement.";
+    if (options.allowConflictConfirmation) {
+      const confirmed = window.confirm(`${message} Replace the Drive backup with this browser's current data?`);
+      if (confirmed) return true;
+    }
+
+    appSettings.driveAutoSync = false;
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    fillDriveSettingsForm();
+    renderDriveStatus(`${message} Auto-sync was turned off to protect the Drive backup.`);
+    showToast("Drive upload stopped to protect newer backup data.");
+    return false;
   }
 
   function driveQueryLiteral(value) {
@@ -5065,6 +5111,7 @@
     window.__rentLedgerTest = {
       createInvoicePdfBlob,
       currentCycleSummary,
+      importDriveStateFile,
       invoiceArtifactFingerprint,
       withDriveStateLock,
     };

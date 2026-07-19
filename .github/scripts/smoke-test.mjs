@@ -229,6 +229,60 @@ try {
 
   await page.reload({ waitUntil: "networkidle" });
 
+  const driveImportGuard = await page.evaluate(async () => {
+    const settingsKey = "rent-ledger:settings:v1";
+    const stateKey = "rent-ledger:v1";
+    const currentState = JSON.parse(localStorage.getItem(stateKey) || "{}");
+    let failedImportRejected = false;
+    try {
+      await window.__rentLedgerTest.importDriveStateFile(
+        { id: "failed-drive-file", modifiedTime: "2026-07-19T12:00:00.000Z" },
+        async () => {
+          throw new Error("Simulated Drive download failure");
+        }
+      );
+    } catch (error) {
+      failedImportRejected = String(error?.message || error).includes("Simulated Drive download failure");
+    }
+    const settingsAfterFailure = JSON.parse(localStorage.getItem(settingsKey) || "{}");
+
+    const importedState = structuredClone(currentState);
+    importedState.landlord = { ...importedState.landlord, name: "Drive Import Test" };
+    const successfulImport = await window.__rentLedgerTest.importDriveStateFile(
+      { id: "successful-drive-file", modifiedTime: "2026-07-19T13:00:00.000Z" },
+      async () => importedState
+    );
+    const settingsAfterSuccess = JSON.parse(localStorage.getItem(settingsKey) || "{}");
+    const stateAfterSuccess = JSON.parse(localStorage.getItem(stateKey) || "{}");
+    return {
+      failedImportRejected,
+      failedFileId: settingsAfterFailure.driveStateFileId || "",
+      failedModifiedTime: settingsAfterFailure.driveStateModifiedTime || "",
+      successfulImport,
+      successfulFileId: settingsAfterSuccess.driveStateFileId || "",
+      successfulModifiedTime: settingsAfterSuccess.driveStateModifiedTime || "",
+      importedLandlordName: stateAfterSuccess.landlord?.name || "",
+    };
+  });
+  assert(driveImportGuard.failedImportRejected, "Drive download failure should propagate to the load error path.");
+  assert(
+    !driveImportGuard.failedFileId && !driveImportGuard.failedModifiedTime,
+    "Failed Drive download must not trust or persist remote file metadata."
+  );
+  assert(driveImportGuard.successfulImport, "Successful Drive download should save the imported state.");
+  assert(
+    driveImportGuard.successfulFileId === "successful-drive-file" &&
+      driveImportGuard.successfulModifiedTime === "2026-07-19T13:00:00.000Z",
+    "Successful Drive download should persist the imported file metadata."
+  );
+  assert(
+    driveImportGuard.importedLandlordName === "Drive Import Test",
+    "Successful Drive download should persist the imported ledger state before trusting metadata."
+  );
+
+  await page.evaluate(seedInitialFixture, appVersion);
+  await page.reload({ waitUntil: "networkidle" });
+
   const driveLockOrder = await page.evaluate(async () => {
     const order = [];
     let signalStarted;
