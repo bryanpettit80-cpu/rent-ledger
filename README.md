@@ -54,6 +54,8 @@ The launcher starts the app on the local network, opens it on the desktop, print
 
 If the phone cannot connect, run `Start-Rent-Ledger-Mobile.cmd` as Administrator once so it can add the Private-network firewall rule. Guest Wi-Fi, VPNs, cellular data, and router client isolation can still block phone-to-PC access.
 
+The plain HTTP phone URL is intended for basic same-Wi-Fi use. Some browsers do not expose Web Locks outside HTTPS or desktop `localhost`; in that case Rent Ledger blocks Google Drive state changes, full JSON imports, and local backup restores instead of running those cross-tab-sensitive operations without a lock. Use a dedicated HTTPS deployment for those guarded operations on a phone.
+
 ## Invoice Workflow
 
 ### Current Billing Cycle

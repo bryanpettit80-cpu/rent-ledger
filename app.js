@@ -5,7 +5,7 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v39";
+  const APP_VERSION = "rent-ledger-v40";
   const APP_COMMIT_DATE = "July 19, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -3943,10 +3943,14 @@
   }
 
   async function withDriveStateLock(callback) {
-    if (navigator.locks?.request) {
-      return navigator.locks.request("rent-ledger-drive-state", callback);
+    if (!navigator.locks?.request) {
+      const message = "Safe Drive, full-import, and restore operations require Web Locks. Use HTTPS or localhost.";
+      console.warn(message);
+      renderDriveStatus(message);
+      showToast(message);
+      return null;
     }
-    return callback();
+    return navigator.locks.request("rent-ledger-drive-state", callback);
   }
 
   async function uploadDriveStateWithCurrentData(replacementRetry = 0, options = {}) {

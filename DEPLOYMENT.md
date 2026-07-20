@@ -48,7 +48,9 @@ Changing the site origin creates a fresh browser storage area. Migrate the curre
 4. Configure and deploy the new origin as described above.
 5. At the new origin, paste the same OAuth client ID under **Settings > Advanced Drive setup**, use **Connect Drive**, and select the same Google account.
 6. Use **Download from Drive** to replace the new origin's empty state with the uploaded state.
-7. Before resuming work, verify the landlord settings, tenants, saved invoices, balances, closed periods, and period locks. Resume entering data only at the new origin.
+7. Verify the landlord settings, tenants, saved invoices, balances, closed periods, and period locks at the new origin.
+8. Close every tab for the old origin so its in-memory Drive token is discarded. In the Google Cloud Console, remove the old origin from Authorized JavaScript origins on every Web application OAuth client that authorized it, including any previously used or prefilled client that differs from the migration client. Save each changed client before resuming work. Confirm that the old origin is no longer listed and the new dedicated origin remains authorized; keep any other origin only if it is still intentionally trusted.
+9. Reload the new origin, reconnect Drive, and confirm the state can still be downloaded. Resume entering data only at the new origin.
 
 ## Data Sync Upgrade
 
