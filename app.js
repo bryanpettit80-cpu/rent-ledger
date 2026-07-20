@@ -5,7 +5,7 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v38";
+  const APP_VERSION = "rent-ledger-v39";
   const APP_COMMIT_DATE = "July 19, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
@@ -519,11 +519,17 @@
   function setInvoiceWorkflow(invoiceType, options = {}) {
     const nextType = workflowFromInvoiceType(invoiceType);
     currentWorkflow = nextType;
-    if (normalizeInvoiceType(draft.invoiceType) !== nextType) {
+    const draftType = normalizeInvoiceType(draft.invoiceType);
+    const preserveLoadedDraft =
+      options.preserveDraft === true &&
+      Boolean(selectedInvoiceId) &&
+      workflowFromInvoiceType(draftType) === nextType;
+
+    if (!preserveLoadedDraft && draftType !== nextType) {
       startNewInvoice(nextType, { silent: true });
       return;
     }
-    draft.invoiceType = nextType;
+    if (!preserveLoadedDraft) draft.invoiceType = nextType;
     if (!selectedInvoiceId) {
       applyTenantDefaultsToDraft(draft.tenantId || selectedTenantId, { force: false });
     }

@@ -132,7 +132,232 @@ function makeSmokeInvoice({
   };
 }
 
+async function runWorkflowDraftRoutingSmokeTests() {
+  const workflowContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    deviceScaleFactor: 3,
+    serviceWorkers: "block",
+  });
+  const page = await workflowContext.newPage();
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error?.stack || error?.message || String(error)));
+  await page.addInitScript((version) => {
+    window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ = true;
+    sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+  }, appVersion);
+
+  const loadState = async (state, hash) => {
+    if (!page.url().startsWith(baseUrl)) {
+      await page.goto(baseUrl, { waitUntil: "networkidle" });
+    }
+    await page.evaluate(({ nextState, nextHash, version }) => {
+      localStorage.clear();
+      sessionStorage.clear();
+      localStorage.setItem("rent-ledger:v1", JSON.stringify(nextState));
+      sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+      sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+      history.replaceState(null, "", nextHash);
+    }, { nextState: state, nextHash: hash, version: appVersion });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction((expectedHash) => window.location.hash === expectedHash, hash);
+  };
+
+  const rentCycleDate = currentRentCycleDate();
+  const rentPeriod = monthLabel(rentCycleDate);
+  const utilityPeriod = monthLabel(previousMonthDate(rentCycleDate));
+  const expectedRentNumber = invoiceNumberPattern("RNT", rentCycleDate);
+  const expectedUtilityNumber = invoiceNumberPattern("UTL", previousMonthDate(rentCycleDate));
+  const expectedSecurityNumber = invoiceNumberPattern("DEP", rentCycleDate);
+
+  try {
+    const combinedId = "legacy-combined-workflow";
+    const combinedInvoice = {
+      ...makeSmokeInvoice({
+        id: combinedId,
+        tenantId: "andrew",
+        invoiceType: "combined",
+        invoiceNumber: "LEGACY-COMBINED-0001",
+        billingPeriod: rentPeriod,
+        amount: 850,
+      }),
+      lineItems: [
+        { type: "Rent", description: "Legacy rent", amount: 850, generatedUtility: false },
+        { type: "Utility", description: "Legacy utility share", amount: 125, generatedUtility: true },
+      ],
+      utilityCalculation: {
+        method: "occupancyUnits",
+        tenantUnits: 1,
+        totalUnits: 4,
+        electric: 300,
+        waterSewer: 120,
+        gas: 80,
+        other: 0,
+      },
+    };
+    await loadState(makeSmokeState({ invoices: [combinedInvoice] }), "#invoices");
+    await page.click(`#invoiceHistory [data-load-invoice="${combinedId}"]`);
+    await page.waitForFunction(() => document.getElementById("invoiceType")?.value === "combined");
+    const combinedDraftState = await page.evaluate(() => {
+      const utility = document.getElementById("utilityCalculator");
+      return {
+        invoiceType: document.getElementById("invoiceType")?.value,
+        invoiceNumber: document.getElementById("invoiceNumber")?.value,
+        lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+        utilityHidden: utility?.hidden,
+        utilityDisplay: utility ? getComputedStyle(utility).display : "",
+        electric: document.getElementById("utilityElectric")?.value,
+        totalUnits: document.getElementById("utilityTotalUnits")?.value,
+      };
+    });
+    assert(combinedDraftState.invoiceType === "combined", "Opening a saved combined invoice must preserve its invoice type.");
+    assert(combinedDraftState.invoiceNumber === "LEGACY-COMBINED-0001", "Opening a combined invoice must preserve its number.");
+    assert(
+      combinedDraftState.lineTypes.join("|") === "Rent|Utility",
+      `Opening a combined invoice must preserve rent and utility lines, got ${combinedDraftState.lineTypes.join("|")}.`
+    );
+    assert(
+      !combinedDraftState.utilityHidden && combinedDraftState.utilityDisplay !== "none" &&
+        combinedDraftState.electric === "300" && combinedDraftState.totalUnits === "4",
+      "Opening a combined invoice must preserve and display its utility calculation."
+    );
+    await page.click("#saveInvoice");
+    await page.waitForFunction((invoiceId) => {
+      const invoice = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices?.find(
+        (item) => item.id === invoiceId
+      );
+      return invoice?.updatedAt && invoice.updatedAt !== "2026-07-01T12:00:00.000Z";
+    }, combinedId);
+    const savedCombinedState = await page.evaluate((invoiceId) => {
+      const invoices = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [];
+      const invoice = invoices.find((item) => item.id === invoiceId);
+      return {
+        invoiceCount: invoices.length,
+        invoiceType: invoice?.invoiceType,
+        lineTypes: (invoice?.lineItems || []).map((item) => item.type),
+        electric: invoice?.utilityCalculation?.electric,
+      };
+    }, combinedId);
+    assert(
+      savedCombinedState.invoiceCount === 1 && savedCombinedState.invoiceType === "combined" &&
+        savedCombinedState.lineTypes.join("|") === "Rent|Utility" && savedCombinedState.electric === 300,
+      `Saving a loaded combined invoice must retain its identity and details, got ${JSON.stringify(savedCombinedState)}.`
+    );
+
+    await loadState(makeSmokeState(), "#utility");
+    await page.waitForFunction(() => document.getElementById("invoiceType")?.value === "utility");
+    const directUtilityState = await page.evaluate(() => {
+      const utility = document.getElementById("utilityCalculator");
+      return {
+        invoiceType: document.getElementById("invoiceType")?.value,
+        invoiceNumber: document.getElementById("invoiceNumber")?.value,
+        billingPeriod: document.getElementById("billingPeriod")?.value,
+        lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+        utilityPanelHidden: document.getElementById("utilityBatchPanel")?.hidden,
+        utilityHidden: utility?.hidden,
+        utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      };
+    });
+    assert(
+      directUtilityState.invoiceType === "utility" && expectedUtilityNumber.test(directUtilityState.invoiceNumber || "") &&
+        directUtilityState.billingPeriod === utilityPeriod && directUtilityState.lineTypes.length === 0 &&
+        directUtilityState.utilityPanelHidden === false && !directUtilityState.utilityHidden &&
+        directUtilityState.utilityDisplay !== "none",
+      `Direct #utility navigation must initialize a fresh utility draft, got ${JSON.stringify(directUtilityState)}.`
+    );
+
+    await loadState(makeSmokeState(), "#security");
+    await page.waitForFunction(() => document.getElementById("invoiceType")?.value === "security");
+    const directSecurityState = await page.evaluate(() => {
+      const utility = document.getElementById("utilityCalculator");
+      return {
+        invoiceType: document.getElementById("invoiceType")?.value,
+        invoiceNumber: document.getElementById("invoiceNumber")?.value,
+        billingPeriod: document.getElementById("billingPeriod")?.value,
+        lineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+        lineAmounts: [...document.querySelectorAll("[data-line-amount]")].map((input) => input.value),
+        securityPanelHidden: document.getElementById("securityDepositBatchPanel")?.hidden,
+        utilityHidden: utility?.hidden,
+        utilityDisplay: utility ? getComputedStyle(utility).display : "",
+      };
+    });
+    assert(
+      directSecurityState.invoiceType === "security" && expectedSecurityNumber.test(directSecurityState.invoiceNumber || "") &&
+        directSecurityState.billingPeriod === rentPeriod && directSecurityState.lineTypes.join("|") === "Security Deposit" &&
+        directSecurityState.lineAmounts[0] === "350" && directSecurityState.securityPanelHidden === false &&
+        directSecurityState.utilityHidden && directSecurityState.utilityDisplay === "none",
+      `Direct #security navigation must initialize a fresh deposit draft, got ${JSON.stringify(directSecurityState)}.`
+    );
+
+    const utilityId = "selected-utility-hash-change";
+    const originalUtility = makeSmokeInvoice({
+      id: utilityId,
+      tenantId: "andrew",
+      invoiceType: "utility",
+      invoiceNumber: "UTL-ORIGINAL-0001",
+      billingPeriod: utilityPeriod,
+      amount: 125,
+    });
+    await loadState(makeSmokeState({ invoices: [originalUtility] }), "#invoices");
+    await page.click(`#invoiceHistory [data-load-invoice="${utilityId}"]`);
+    await page.waitForFunction(() => document.getElementById("invoiceType")?.value === "utility");
+    await page.evaluate(() => {
+      window.location.hash = "#rent";
+    });
+    await page.waitForFunction(
+      () => window.location.hash === "#rent" && document.getElementById("invoiceType")?.value === "rent"
+    );
+    const crossWorkflowDraftState = await page.evaluate((invoiceId) => {
+      const invoices = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [];
+      const original = invoices.find((invoice) => invoice.id === invoiceId);
+      return {
+        invoiceCount: invoices.length,
+        originalType: original?.invoiceType,
+        originalLineTypes: (original?.lineItems || []).map((item) => item.type),
+        draftType: document.getElementById("invoiceType")?.value,
+        draftNumber: document.getElementById("invoiceNumber")?.value,
+        draftLineTypes: [...document.querySelectorAll("[data-line-type]")].map((input) => input.value),
+      };
+    }, utilityId);
+    assert(
+      crossWorkflowDraftState.invoiceCount === 1 && crossWorkflowDraftState.originalType === "utility" &&
+        crossWorkflowDraftState.originalLineTypes.join("|") === "Utility" && crossWorkflowDraftState.draftType === "rent" &&
+        expectedRentNumber.test(crossWorkflowDraftState.draftNumber || "") &&
+        crossWorkflowDraftState.draftLineTypes.join("|") === "Rent",
+      `A cross-workflow hash change must start a fresh draft without retagging the selected invoice, got ${JSON.stringify(crossWorkflowDraftState)}.`
+    );
+    await page.click("#saveInvoice");
+    await page.waitForFunction(() => {
+      const invoices = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [];
+      return invoices.length === 2;
+    });
+    const crossWorkflowSavedState = await page.evaluate((invoiceId) => {
+      const invoices = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").invoices || [];
+      const original = invoices.find((invoice) => invoice.id === invoiceId);
+      const created = invoices.find((invoice) => invoice.id !== invoiceId);
+      return {
+        originalType: original?.invoiceType,
+        originalNumber: original?.invoiceNumber,
+        originalLineTypes: (original?.lineItems || []).map((item) => item.type),
+        createdType: created?.invoiceType,
+        createdNumber: created?.invoiceNumber,
+      };
+    }, utilityId);
+    assert(
+      crossWorkflowSavedState.originalType === "utility" && crossWorkflowSavedState.originalNumber === "UTL-ORIGINAL-0001" &&
+        crossWorkflowSavedState.originalLineTypes.join("|") === "Utility" &&
+        crossWorkflowSavedState.createdType === "rent" && expectedRentNumber.test(crossWorkflowSavedState.createdNumber || ""),
+      `Saving after a cross-workflow hash change must leave the original invoice unchanged, got ${JSON.stringify(crossWorkflowSavedState)}.`
+    );
+  } finally {
+    if (pageErrors.length) failures.push(`Workflow routing page errors: ${pageErrors.join(" | ")}.`);
+    await workflowContext.close();
+  }
+}
+
 try {
+  await runWorkflowDraftRoutingSmokeTests();
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => {
@@ -1181,6 +1406,7 @@ try {
   );
 
   const dialogsBeforePaidCleanup = dialogMessages.length;
+  nextDialogAction = "accept";
   await page.click("#clearPaid");
   await page.waitForFunction(() => {
     const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");

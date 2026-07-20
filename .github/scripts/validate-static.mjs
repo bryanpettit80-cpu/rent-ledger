@@ -85,6 +85,18 @@ assert(
     cycleInvoiceSource.includes("options.findExisting(tenant.id, duplicateCheckSummary)"),
   "Cycle invoice creation must refresh duplicate checks so batch-created invoices block duplicate tenant IDs."
 );
+const invoiceWorkflowStart = files.app.indexOf("function setInvoiceWorkflow");
+const invoiceWorkflowEnd = files.app.indexOf("function renderSplash", invoiceWorkflowStart);
+const invoiceWorkflowSource = files.app.slice(invoiceWorkflowStart, invoiceWorkflowEnd);
+assert(
+  invoiceWorkflowStart >= 0 && invoiceWorkflowEnd > invoiceWorkflowStart &&
+    invoiceWorkflowSource.includes("const preserveLoadedDraft =") &&
+    invoiceWorkflowSource.includes("Boolean(selectedInvoiceId)") &&
+    invoiceWorkflowSource.includes("workflowFromInvoiceType(draftType) === nextType") &&
+    invoiceWorkflowSource.includes("if (!preserveLoadedDraft && draftType !== nextType)") &&
+    invoiceWorkflowSource.includes("if (!preserveLoadedDraft) draft.invoiceType = nextType"),
+  "Workflow routing must preserve only a loaded invoice in its matching workflow and reset other cross-workflow drafts."
+);
 assert(files.html.includes('id="tenantSecurityDeposit"'), "Tenant profile must include a security deposit field.");
 assert(files.html.includes('id="paymentDialog"'), "Saved invoices must use a payment popup for full or partial payments.");
 assert(files.html.includes('id="paymentPartial"'), "Payment popup must include a Partial button.");
