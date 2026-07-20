@@ -3236,7 +3236,7 @@
       : refreshCanonicalClosedPeriods();
     if (!options.stateReplacement) mergeLatestAuditEvents();
     if (options.audit !== false) recordAuditEvent(reason);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistEncryptedState(state);
     stateWriteRevision += 1;
     if (options.stateReplacement) publishStateReplacement(reason);
     recordLocalBackup(reason, state);
@@ -5016,6 +5016,57 @@
   function formatNumber(value) {
     const number = toNumber(value);
     return Number.isInteger(number) ? String(number) : String(roundMoney(number));
+  }
+
+  const STATE_ENCRYPTED_KEY = "rent-ledger:state-encrypted:v1";
+
+  function getStoragePassphrase() {
+    return window.sessionStorage.getItem("rent-ledger:storage-passphrase")
+      || window.prompt("Enter passphrase to protect local data") || "";
+  }
+
+  async function deriveAesKey(passphrase, saltBytes) {
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(passphrase),
+      "PBKDF2",
+      false,
+      ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: saltBytes, iterations: 210000, hash: "SHA-256" },
+      baseKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  }
+
+  function bytesToBase64(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 1) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+
+  async function persistEncryptedState(value) {
+    const passphrase = getStoragePassphrase();
+    if (!passphrase) throw new Error("Missing storage passphrase");
+    window.sessionStorage.setItem("rent-ledger:storage-passphrase", passphrase);
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveAesKey(passphrase, salt);
+    const plaintext = new TextEncoder().encode(JSON.stringify(value));
+    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+    localStorage.setItem(
+      STATE_ENCRYPTED_KEY,
+      JSON.stringify({
+        v: 1,
+        s: bytesToBase64(salt),
+        i: bytesToBase64(iv),
+        c: bytesToBase64(new Uint8Array(ciphertext)),
+      })
+    );
   }
 
   function formatPhoneNumber(value) {
