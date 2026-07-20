@@ -538,6 +538,32 @@ try {
     driveLockOrder.join("|") === "first-start|release|first-end|second",
     `Drive operation lock should serialize replacement and artifact work across tabs, got ${driveLockOrder.join("|")}.`
   );
+  const unsupportedDriveLock = await page.evaluate(async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(navigator, "locks");
+    let callbackRan = false;
+    Object.defineProperty(navigator, "locks", { configurable: true, value: undefined });
+    try {
+      const result = await window.__rentLedgerTest.withDriveStateLock(() => {
+        callbackRan = true;
+      });
+      return {
+        callbackRan,
+        result,
+        toast: document.getElementById("toast")?.textContent || "",
+      };
+    } finally {
+      if (originalDescriptor) Object.defineProperty(navigator, "locks", originalDescriptor);
+      else delete navigator.locks;
+    }
+  });
+  assert(
+    !unsupportedDriveLock.callbackRan && unsupportedDriveLock.result === null,
+    "Browsers without Web Locks must block guarded state operations instead of running the callback unlocked."
+  );
+  assert(
+    unsupportedDriveLock.toast.includes("Web Locks"),
+    `Unsupported browsers must receive a clear Drive safety message, got ${unsupportedDriveLock.toast}.`
+  );
   const artifactFingerprintChanges = await page.evaluate(() => {
     const tenantId = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}").tenants?.[0]?.id || "";
     const invoice = {

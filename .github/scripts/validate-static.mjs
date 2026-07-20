@@ -286,6 +286,7 @@ const driveUploadSource = files.app.slice(
   files.app.indexOf("async function uploadDriveState"),
   files.app.indexOf("async function uploadInvoicePdf")
 );
+const driveLockSource = extractFunction(files.app, "withDriveStateLock");
 assert(
   driveUploadSource.includes("return withDriveStateLock(upload)") &&
     driveUploadSource.includes('navigator.locks.request("rent-ledger-drive-state", callback)') &&
@@ -294,6 +295,12 @@ assert(
     driveUploadSource.includes("stateWriteRevision !== uploadedStateRevision") &&
     driveUploadSource.includes("uploadDriveStateWithCurrentData(replacementRetry + 1, options)"),
   "Drive state uploads must serialize across tabs and retry after replacement or same-tab state changes."
+);
+assert(
+  driveLockSource.includes("if (!navigator.locks?.request)") &&
+    driveLockSource.includes("return null") &&
+    !driveLockSource.includes("return callback()"),
+  "Browsers without Web Locks must block guarded state operations instead of running them without cross-tab serialization."
 );
 const driveArtifactSource = files.app.slice(
   files.app.indexOf("async function saveInvoiceArtifactsToDrive"),
@@ -312,12 +319,15 @@ assert(
   "Invoice PDF batches must lock, verify source revisions around each upload, and delay metadata until the batch stays current."
 );
 const saveInvoiceSource = extractFunction(files.app, "saveInvoice");
+const finalizeCreatedInvoicesSource = extractFunction(files.app, "finalizeCreatedInvoices");
 assert(
   saveInvoiceSource.includes("uploadDraftRevision") &&
     saveInvoiceSource.includes("draftEditRevision !== uploadDraftRevision") &&
+    saveInvoiceSource.includes("if (driveSaved === null) return;") &&
+    finalizeCreatedInvoicesSource.includes("if (driveSaved === null) return false;") &&
     driveArtifactSource.includes("updateDraft: false") &&
     driveArtifactSource.includes("draftEditRevision === startingDraftRevision"),
-  "An asynchronous Drive upload must preserve newer unsaved invoice-form edits instead of relabeling or replacing the draft."
+  "An asynchronous Drive upload must preserve newer unsaved invoice-form edits and lock-specific status messages."
 );
 const driveSettingsSource = files.app.slice(
   files.app.indexOf("function saveDriveSettings"),
@@ -435,13 +445,24 @@ assert(
   "README must explain that each hosted origin needs an authorized Web application OAuth client."
 );
 assert(
+  files.readme.includes("plain HTTP phone URL") &&
+    files.readme.includes("blocks Google Drive state changes, full JSON imports, and local backup restores") &&
+    files.readme.includes("dedicated HTTPS deployment"),
+  "README must disclose the fail-closed Web Locks limitation for the plain HTTP mobile launcher."
+);
+assert(
   files.deployment.includes("Upload to Drive") &&
     files.deployment.includes("stop entering or editing data on the old origin") &&
     files.deployment.includes("both the old origin and the new dedicated origin") &&
     files.deployment.includes("same OAuth client ID") &&
     files.deployment.includes("Download from Drive") &&
-    files.deployment.includes("tenants, saved invoices, balances, closed periods, and period locks"),
-  "Deployment guide must document the old-origin to new-origin Drive migration and verification sequence."
+    files.deployment.includes("tenants, saved invoices, balances, closed periods, and period locks") &&
+    files.deployment.includes("remove the old origin from Authorized JavaScript origins on every Web application OAuth client") &&
+    files.deployment.includes("previously used or prefilled client") &&
+    files.deployment.includes("old origin is no longer listed") &&
+    files.deployment.includes("only if it is still intentionally trusted") &&
+    files.deployment.includes("before resuming work"),
+  "Deployment guide must document the complete Drive migration, including retirement of the old OAuth origin."
 );
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
@@ -492,6 +513,10 @@ assert(
 assert(
   files.smokeTest.includes("Drive operation lock should serialize replacement and artifact work across tabs"),
   "Smoke test must cover cross-tab Drive operation serialization."
+);
+assert(
+  files.smokeTest.includes("Browsers without Web Locks must block guarded state operations"),
+  "Smoke test must cover the fail-closed behavior when Web Locks are unavailable."
 );
 assert(
   files.smokeTest.includes("Invoice artifact fingerprint should change when PDF source data changes"),
