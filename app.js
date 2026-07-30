@@ -5,14 +5,22 @@
   const BACKUP_KEY = "rent-ledger:backups:v1";
   const MAX_LOCAL_BACKUPS = 25;
   const MAX_AUDIT_EVENTS = 250;
-  const APP_VERSION = "rent-ledger-v40";
-  const APP_COMMIT_DATE = "July 19, 2026";
+  const APP_VERSION = "rent-ledger-v41";
+  const APP_COMMIT_DATE = "July 30, 2026";
   const APP_REFRESH_KEY = `rent-ledger:refreshed:${APP_VERSION}`;
   const APP_SETTINGS_KEY = "rent-ledger:settings:v1";
   const SPLASH_SEEN_KEY = `rent-ledger:splash-seen:${APP_VERSION}`;
   const DEFAULT_GOOGLE_CLIENT_ID =
     "1053768686767-tjgtqui15pmh3q9blogtruftmo6lktfg.apps.googleusercontent.com";
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const EMAIL_PRODUCTION_ORIGIN = "https://rent-ledger-app.pages.dev";
+  const EMAIL_SCOPES =
+    "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email";
+  const EMAIL_PURPOSES = new Set(["new_invoice", "payment_received", "payment_reminder"]);
+  const EMAIL_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
+  const EMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+  const EMAIL_ACCOUNT_TIMEOUT_MS = 15000;
+  const EMAIL_SEND_TIMEOUT_MS = 30000;
   const DRIVE_FOLDER_NAME = "Rent Ledger";
   const DRIVE_INVOICE_FOLDER_NAME = "Invoices";
   const DRIVE_STATE_FILE_NAME = "rent-ledger-state.json";
@@ -72,6 +80,11 @@
   let toastTimer = 0;
   let driveAccessToken = "";
   let driveTokenClient = null;
+  let emailAccessToken = "";
+  let emailTokenClient = null;
+  let emailAccountEmail = "";
+  let emailSendInFlight = false;
+  let emailDialogState = null;
   let driveSyncTimer = 0;
   let googleIdentityLoadPromise = null;
   let draftRenderFrame = 0;
@@ -85,6 +98,7 @@
     bindEvents();
     fillLandlordForm();
     fillDriveSettingsForm();
+    fillEmailSettingsForm();
     fillTenantForm(selectedTenantId);
     renderAll();
     registerServiceWorker();
@@ -208,6 +222,7 @@
       "metricPaid",
       "toast",
       "exportBackupSettings",
+      "importBackupButton",
       "importBackup",
       "backupCount",
       "backupLatest",
@@ -220,11 +235,14 @@
       "closedPeriodList",
       "auditTrailList",
       "googleClientId",
+      "emailGoogleClientId",
       "driveAutoSync",
       "driveStatus",
       "connectDrive",
       "loadDriveState",
       "saveDriveState",
+      "connectEmail",
+      "emailStatus",
       "splashScreen",
       "splashVersion",
       "splashCommitDate",
@@ -237,6 +255,20 @@
       "partialPaymentFields",
       "partialPaymentAmount",
       "paymentPartialSave",
+      "emailDialog",
+      "emailDialogTitle",
+      "emailPurpose",
+      "emailFrom",
+      "emailAccount",
+      "emailTo",
+      "emailSubject",
+      "emailBody",
+      "emailAttachmentRow",
+      "emailAttachmentName",
+      "emailDialogStatus",
+      "emailCopy",
+      "emailCancel",
+      "emailSend",
     ].forEach((id) => {
       els[id] = document.getElementById(id);
     });
@@ -406,6 +438,21 @@
     els.connectDrive.addEventListener("click", connectDrive);
     els.loadDriveState.addEventListener("click", loadStateFromDrive);
     els.saveDriveState.addEventListener("click", () => saveStateToDrive("Manual upload", { allowConflictConfirmation: true }));
+    if (els.emailGoogleClientId) {
+      els.emailGoogleClientId.addEventListener("input", () => renderEmailStatus());
+      els.emailGoogleClientId.addEventListener("change", () => saveEmailSettings(false));
+    }
+    if (els.connectEmail) els.connectEmail.addEventListener("click", connectEmail);
+    if (els.emailPurpose) els.emailPurpose.addEventListener("change", refreshEmailDraftForPurpose);
+    if (els.emailCopy) els.emailCopy.addEventListener("click", copyReviewedEmail);
+    if (els.emailCancel) els.emailCancel.addEventListener("click", closeEmailDialog);
+    if (els.emailSend) els.emailSend.addEventListener("click", sendInvoiceEmail);
+    if (els.emailDialog) {
+      els.emailDialog.addEventListener("click", (event) => {
+        if (event.target === els.emailDialog && !emailSendInFlight) closeEmailDialog();
+      });
+    }
+    document.addEventListener("keydown", handleEmailDialogKeydown);
 
     document.getElementById("invoiceForm").addEventListener("submit", saveInvoice);
     els.printInvoice.addEventListener("click", () => window.print());
@@ -414,6 +461,9 @@
     els.invoiceHistory.addEventListener("click", handleInvoiceHistoryClick);
     els.overviewInvoiceList.addEventListener("click", handleInvoiceHistoryClick);
     if (els.exportBackupSettings) els.exportBackupSettings.addEventListener("click", exportBackup);
+    if (els.importBackupButton && els.importBackup) {
+      els.importBackupButton.addEventListener("click", () => els.importBackup.click());
+    }
     if (els.importBackup) els.importBackup.addEventListener("change", importBackup);
     if (els.restoreLatestBackup) els.restoreLatestBackup.addEventListener("click", restoreLatestBackup);
     if (els.exportInvoiceCsv) els.exportInvoiceCsv.addEventListener("click", exportInvoiceCsv);
@@ -1240,7 +1290,7 @@
     const actions = invoice
       ? `
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
-          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Message</button>
+          ${renderInvoiceEmailAction(invoice, "workflow")}
           <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
           isInvoicePaid(invoice) ? "false" : "true"
         }" type="button">${isInvoicePaid(invoice) ? "Reopen" : "Mark paid"}</button>`
@@ -1331,12 +1381,12 @@
   async function handleCycleActionClick(event) {
     const paidButton = event.target.closest("[data-toggle-paid-invoice]");
     const loadButton = event.target.closest("[data-load-invoice]");
-    const messageButton = event.target.closest("[data-copy-invoice-message]");
+    const emailButton = event.target.closest("[data-email-invoice]");
     const rentButton = event.target.closest("[data-create-rent-invoice]");
     const utilityButton = event.target.closest("[data-create-utility-invoice]");
     const securityButton = event.target.closest("[data-create-security-deposit-invoice]");
 
-    if (paidButton || loadButton || messageButton) {
+    if (paidButton || loadButton || emailButton) {
       handleInvoiceHistoryClick(event);
       return;
     }
@@ -2011,7 +2061,12 @@
   function renderInvoiceActionItems(invoices, emptyMessage, detailForInvoice) {
     if (!invoices.length) return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
     return invoices
-      .map((invoice) => renderInvoiceMiniItem(invoice, detailForInvoice(invoice), { includePayment: true }))
+      .map((invoice) =>
+        renderInvoiceMiniItem(invoice, detailForInvoice(invoice), {
+          includePayment: true,
+          emailPurpose: "payment_reminder",
+        })
+      )
       .join("");
   }
 
@@ -2020,12 +2075,11 @@
     return invoices
       .map((invoice) => {
         const tenant = getTenant(invoice.tenantId);
-        const emailHref = invoiceMailtoHref(invoice);
-        const emailAction = emailHref ? `<a class="small-button" href="${escapeAttr(emailHref)}">Email</a>` : "";
-        return renderInvoiceMiniItem(invoice, invoiceMessageSubject(invoice), {
+        const email = buildInvoiceEmail("payment_reminder", invoice);
+        return renderInvoiceMiniItem(invoice, email.subject, {
           tone: tenant?.email ? "info" : "warning",
           includePayment: false,
-          extraActions: emailAction,
+          emailPurpose: "payment_reminder",
         });
       })
       .join("");
@@ -2048,7 +2102,7 @@
         </div>
         <div class="card-actions">
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
-          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Copy message</button>
+          ${renderInvoiceEmailAction(invoice, options.emailPurpose || "workflow")}
           ${paymentAction}
           ${options.extraActions || ""}
         </div>
@@ -2059,7 +2113,7 @@
     const viewButton = event.target.closest("[data-open-view]");
     const lockButton = event.target.closest("[data-lock-current-cycle]");
     const invoiceAction = event.target.closest(
-      "[data-load-invoice], [data-toggle-paid-invoice], [data-delete-invoice], [data-copy-invoice-message]"
+      "[data-load-invoice], [data-toggle-paid-invoice], [data-delete-invoice], [data-email-invoice]"
     );
 
     if (viewButton) {
@@ -2125,53 +2179,738 @@
     return duplicates;
   }
 
-  async function copyInvoiceMessage(invoiceId) {
+  function emailPurposeForInvoice(invoice, requestedPurpose = "") {
+    const available = availableEmailPurposes(invoice);
+    if (EMAIL_PURPOSES.has(requestedPurpose) && available.includes(requestedPurpose)) return requestedPurpose;
+    if (requestedPurpose === "overdue" || requestedPurpose === "communication") {
+      if (available.includes("payment_reminder")) return "payment_reminder";
+    }
+    if (
+      available.includes("payment_received") &&
+      (invoice?.status === "paid" || invoice?.status === "partial")
+    ) {
+      return "payment_received";
+    }
+    if (available.includes("new_invoice")) return "new_invoice";
+    return available[0] || "";
+  }
+
+  function availableEmailPurposes(invoice) {
+    const status = normalizeInvoiceStatus(invoice?.status);
+    const hasPayment = normalizeInvoicePayments(invoice?.payments).length > 0;
+    const balance = calculateTotal(invoice || {});
+    if (status === "paid") return hasPayment ? ["payment_received"] : [];
+    if (status === "partial") {
+      return [
+        ...(hasPayment ? ["payment_received"] : []),
+        ...(balance > 0 ? ["payment_reminder"] : []),
+      ];
+    }
+    return ["new_invoice", ...(balance > 0 ? ["payment_reminder"] : [])];
+  }
+
+  function renderInvoiceEmailAction(invoice, requestedPurpose = "workflow") {
+    const purpose = emailPurposeForInvoice(invoice, requestedPurpose);
+    if (!purpose) {
+      return '<button class="small-button" type="button" disabled title="No recorded payment details are available for this paid invoice.">Email unavailable</button>';
+    }
+    return `<button class="small-button" data-email-invoice="${escapeAttr(
+      invoice.id
+    )}" data-email-purpose="${escapeAttr(purpose)}" type="button">Email</button>`;
+  }
+
+  function buildInvoiceEmail(purpose, invoice, payment) {
+    if (!EMAIL_PURPOSES.has(purpose)) throw new Error("Choose a valid email context.");
+    if (!invoice) throw new Error("The invoice is no longer available.");
+    if (!availableEmailPurposes(invoice).includes(purpose)) {
+      if (purpose === "payment_received") throw new Error("Record a payment before preparing a payment email.");
+      if (purpose === "payment_reminder") throw new Error("A paid or zero-balance invoice cannot receive a reminder.");
+      throw new Error("New-invoice email is available only for an open invoice.");
+    }
+
+    const tenant = getTenant(invoice.tenantId);
+    const landlord = state.landlord || {};
+    const firstName = emailTextPart(tenant?.name).split(/\s+/)[0] || "there";
+    const invoiceNumber = emailTextPart(invoice.invoiceNumber) || "your invoice";
+    const invoiceType = emailTextPart(invoiceTypeLabel(invoice.invoiceType)).toLowerCase() || "rental";
+    const billingPeriod = emailTextPart(invoice.billingPeriod) || "the current billing period";
+    const balance = calculateTotal(invoice);
+    const signOff = ["", "Thank you,", emailTextPart(landlord.name) || "Rent Ledger"];
+    const paymentInstructions = String(invoice.paymentInstructions || landlord.paymentInstructions || "").trim();
+    let subject = "";
+    let lines = [];
+
+    if (purpose === "new_invoice") {
+      subject = `New ${invoiceType} invoice ${invoiceNumber} - ${billingPeriod}`;
+      lines = [
+        `Hello ${firstName},`,
+        "",
+        `Your new ${invoiceType} invoice ${invoiceNumber} for ${billingPeriod} is ready.`,
+        `Amount due: ${formatMoney(balance)}`,
+        invoice.dueDate ? `Due date: ${formatDate(invoice.dueDate)}` : null,
+        paymentInstructions ? `Payment instructions: ${paymentInstructions}` : null,
+        "The invoice PDF is attached.",
+        ...signOff,
+      ];
+    } else if (purpose === "payment_received") {
+      const latestPayment = payment || latestInvoicePayment(invoice);
+      if (!latestPayment || toNumber(latestPayment.amount) <= 0) {
+        throw new Error("Record a payment before preparing a payment email.");
+      }
+      const paidInFull = invoice.status === "paid" || balance <= 0;
+      subject = paidInFull
+        ? `Payment received - ${invoiceNumber} paid in full`
+        : `Partial payment received - ${invoiceNumber}`;
+      lines = [
+        `Hello ${firstName},`,
+        "",
+        `We received your ${paidInFull ? "payment" : "partial payment"} of ${formatMoney(
+          latestPayment.amount
+        )} on ${formatDate(latestPayment.date) || "the recorded payment date"} for invoice ${invoiceNumber}.`,
+        paidInFull
+          ? "This invoice is now paid in full."
+          : `Remaining balance: ${formatMoney(balance)}`,
+        ...signOff,
+      ];
+    } else {
+      const overdueDays = daysPastDue(invoice);
+      const today = toDateInput(new Date());
+      const dueLine = overdueDays
+        ? `The ${invoice.status === "partial" ? "remaining " : ""}balance was due ${formatDate(
+            invoice.dueDate
+          )} and is ${overdueDays} day${overdueDays === 1 ? "" : "s"} overdue.`
+        : invoice.dueDate === today
+          ? "The balance is due today."
+          : invoice.dueDate
+            ? `The balance is due ${formatDate(invoice.dueDate)}.`
+            : null;
+      subject = `Payment reminder - ${invoiceNumber} - ${formatMoney(balance)} due`;
+      lines = [
+        `Hello ${firstName},`,
+        "",
+        `This is a payment reminder for invoice ${invoiceNumber} (${invoiceType}) for ${billingPeriod}.`,
+        `${invoice.status === "partial" ? "Remaining balance" : "Balance due"}: ${formatMoney(balance)}`,
+        dueLine,
+        paymentInstructions ? `Payment instructions: ${paymentInstructions}` : null,
+        "The current invoice PDF is attached.",
+        ...signOff,
+      ];
+    }
+
+    return {
+      purpose,
+      subject: emailTextPart(subject),
+      body: lines.filter((line) => line !== null).join("\n"),
+      attachPdf: purpose === "new_invoice" || purpose === "payment_reminder",
+      attachmentName: invoicePdfFileName(invoice, tenant),
+    };
+  }
+
+  function latestInvoicePayment(invoice) {
+    const payments = normalizeInvoicePayments(invoice?.payments);
+    return payments[payments.length - 1] || null;
+  }
+
+  function emailTextPart(value) {
+    return String(value || "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function openEmailDialog(invoiceId, purpose) {
     const invoice = state.invoices.find((item) => item.id === invoiceId);
-    if (!invoice) return;
-    const message = invoiceMessage(invoice);
+    if (!invoice || !els.emailDialog) return;
+    const selectedPurpose = emailPurposeForInvoice(invoice, purpose);
+    if (!selectedPurpose) {
+      showToast("No recorded payment details are available for this paid invoice.");
+      return;
+    }
+    const tenant = getTenant(invoice.tenantId);
+    emailDialogState = {
+      invoiceId: invoice.id,
+      fingerprint: emailInvoiceFingerprint(invoice, tenant, state.landlord),
+      storageValue: localStorage.getItem(STORAGE_KEY) || "",
+      purpose: selectedPurpose,
+      returnFocus: document.activeElement,
+    };
+
+    configureEmailPurposeOptions(invoice, selectedPurpose);
+    els.emailDialogTitle.textContent = `Email ${invoice.invoiceNumber || "invoice"}`;
+    els.emailFrom.value = String(state.landlord.email || "").trim();
+    els.emailAccount.value = emailAccountEmail;
+    els.emailTo.value = String(tenant?.email || "").trim();
+    els.emailFrom.readOnly = true;
+    els.emailAccount.readOnly = true;
+    els.emailTo.readOnly = true;
     try {
-      await navigator.clipboard.writeText(message);
-      showToast("Message copied.");
+      applyEmailDraft(buildInvoiceEmail(selectedPurpose, invoice));
+      setEmailDialogStatus(emailDialogReadyMessage());
     } catch (error) {
-      console.warn("Unable to copy invoice message.", error);
+      els.emailSubject.value = "";
+      els.emailBody.value = "";
+      els.emailAttachmentRow.hidden = true;
+      els.emailAttachmentName.textContent = "No attachment";
+      setEmailDialogStatus(error.message || "This email context is not available.", "error");
+    }
+    els.emailDialog.hidden = false;
+    updateEmailDialogControls();
+    els.emailSubject.focus();
+  }
+
+  function configureEmailPurposeOptions(invoice, selectedPurpose) {
+    if (!els.emailPurpose) return;
+    const available = new Set(availableEmailPurposes(invoice));
+    [...els.emailPurpose.options].forEach((option) => {
+      option.disabled = !available.has(option.value);
+    });
+    els.emailPurpose.value = selectedPurpose;
+  }
+
+  function refreshEmailDraftForPurpose() {
+    if (!emailDialogState) return;
+    const invoice = state.invoices.find((item) => item.id === emailDialogState.invoiceId);
+    if (!invoice) {
+      setEmailDialogStatus("This invoice is no longer available.", "error");
+      updateEmailDialogControls();
+      return;
+    }
+    const purpose = els.emailPurpose.value;
+    try {
+      const message = buildInvoiceEmail(purpose, invoice);
+      emailDialogState.purpose = purpose;
+      applyEmailDraft(message);
+      setEmailDialogStatus(emailDialogReadyMessage());
+    } catch (error) {
+      setEmailDialogStatus(error.message || "Choose another email context.", "error");
+    }
+    updateEmailDialogControls();
+  }
+
+  function applyEmailDraft(message) {
+    els.emailSubject.value = message.subject;
+    els.emailBody.value = message.body;
+    els.emailAttachmentRow.hidden = !message.attachPdf;
+    els.emailAttachmentName.textContent = message.attachPdf ? message.attachmentName : "No attachment";
+  }
+
+  function emailDialogReadyMessage() {
+    if (!emailOriginAllowed()) {
+      return `Direct send is available only at ${EMAIL_PRODUCTION_ORIGIN}. You can still copy this reviewed email.`;
+    }
+    if (!emailAccessToken || !emailAccountEmail) {
+      return "Send will ask Google to authorize Gmail. You can also connect first in Settings.";
+    }
+    const from = String(state.landlord.email || "").trim();
+    if (from && from.toLowerCase() !== emailAccountEmail.toLowerCase()) {
+      return `${from} must be a verified Send mail as alias of ${emailAccountEmail}.`;
+    }
+    return `Ready to send from ${from || "the saved landlord email"}.`;
+  }
+
+  function updateEmailDialogControls() {
+    if (!els.emailSend) return;
+    const invoice = emailDialogState
+      ? state.invoices.find((item) => item.id === emailDialogState.invoiceId)
+      : null;
+    const purpose = els.emailPurpose?.value || "";
+    const purposeAllowed = invoice && availableEmailPurposes(invoice).includes(purpose);
+    els.emailSend.disabled =
+      emailSendInFlight ||
+      !emailOriginAllowed() ||
+      !isValidGoogleClientId(appSettings.emailGoogleClientId) ||
+      Boolean(emailDialogState?.sentMessageId) ||
+      Boolean(emailDialogState?.deliveryUncertain) ||
+      !purposeAllowed;
+    if (els.emailCopy) els.emailCopy.disabled = emailSendInFlight || !emailDialogState;
+    if (els.emailCancel) els.emailCancel.disabled = emailSendInFlight;
+    if (els.emailPurpose) els.emailPurpose.disabled = emailSendInFlight;
+    if (els.emailSubject) els.emailSubject.disabled = emailSendInFlight;
+    if (els.emailBody) els.emailBody.disabled = emailSendInFlight;
+    els.emailSend.textContent = emailSendInFlight
+      ? "Sending..."
+      : emailDialogState?.sentMessageId
+        ? "Sent"
+        : emailDialogState?.deliveryUncertain
+          ? "Check Sent"
+          : "Send";
+  }
+
+  function handleEmailDialogKeydown(event) {
+    if (!emailDialogState || !els.emailDialog || els.emailDialog.hidden) return;
+    if (event.key === "Escape" && !emailSendInFlight) {
+      event.preventDefault();
+      closeEmailDialog();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = [...els.emailDialog.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )].filter((element) => !element.hidden && element.getClientRects().length > 0);
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !els.emailDialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !els.emailDialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function closeEmailDialog() {
+    if (emailSendInFlight || !els.emailDialog) return;
+    const returnFocus = emailDialogState?.returnFocus;
+    emailDialogState = null;
+    els.emailDialog.hidden = true;
+    setEmailDialogStatus("");
+    if (returnFocus && document.contains(returnFocus) && typeof returnFocus.focus === "function") returnFocus.focus();
+  }
+
+  async function copyReviewedEmail() {
+    if (!emailDialogState) return;
+    const subject = String(els.emailSubject.value || "").trim();
+    const body = String(els.emailBody.value || "").trim();
+    try {
+      await navigator.clipboard.writeText([`Subject: ${subject}`, "", body].join("\n"));
+      setEmailDialogStatus("Reviewed subject and message copied.");
+      showToast("Email copied.");
+    } catch (error) {
+      console.warn("Unable to copy the reviewed email.", error);
+      setEmailDialogStatus("Copy is unavailable in this browser.", "error");
       showToast("Copy unavailable in this browser.");
     }
   }
 
-  function invoiceMessageSubject(invoice) {
-    return `${invoice.invoiceNumber || "Invoice"} ${invoice.billingPeriod || ""} balance ${formatMoney(
-      calculateTotal(invoice)
-    )}`.trim();
+  function setEmailDialogStatus(message, tone = "") {
+    if (!els.emailDialogStatus) return;
+    els.emailDialogStatus.textContent = message || "";
+    els.emailDialogStatus.dataset.tone = tone;
+    els.emailDialogStatus.classList.toggle("is-error", tone === "error");
+    els.emailDialogStatus.classList.toggle("is-success", tone === "success");
   }
 
-  function invoiceMessage(invoice) {
-    const tenant = getTenant(invoice.tenantId);
-    const firstName = String(tenant?.name || "").trim().split(/\s+/)[0] || "there";
-    const balanceLabel = invoice.status === "partial" ? "remaining balance" : "balance";
-    const dueLabel = invoice.dueDate ? ` due ${formatDate(invoice.dueDate)}` : "";
-    return [
-      `Hello ${firstName},`,
-      "",
-      `This is a reminder for ${invoice.invoiceNumber || "your invoice"} (${invoiceTypeLabel(
-        invoice.invoiceType
-      )}) for ${invoice.billingPeriod || "the current billing period"}.`,
-      `The ${balanceLabel}${dueLabel} is ${formatMoney(calculateTotal(invoice))}.`,
-      state.landlord.paymentInstructions ? `Payment instructions: ${state.landlord.paymentInstructions}` : null,
-      "",
-      "Thank you,",
-      state.landlord.name || "Rent Ledger",
-    ]
-      .filter((line) => line !== null)
-      .join("\n");
+  async function sendInvoiceEmail() {
+    if (emailSendInFlight || !emailDialogState) return;
+    saveEmailSettings(false);
+    if (!emailOriginAllowed()) {
+      setEmailDialogStatus(`Direct email is available only at ${EMAIL_PRODUCTION_ORIGIN}.`, "error");
+      return;
+    }
+    if (!isValidGoogleClientId(appSettings.emailGoogleClientId)) {
+      setEmailDialogStatus("Add a valid dedicated Gmail OAuth client ID in Settings.", "error");
+      return;
+    }
+
+    emailSendInFlight = true;
+    updateEmailDialogControls();
+    try {
+      let invoice = assertEmailDialogCurrent();
+      const tenant = getTenant(invoice.tenantId);
+      const purpose = els.emailPurpose.value;
+      const from = validateEmailAddress(els.emailFrom.value, "Landlord From address");
+      const to = validateEmailAddress(els.emailTo.value, "Tenant recipient");
+      const expectedFrom = validateEmailAddress(state.landlord.email, "Saved landlord email");
+      const expectedTo = validateEmailAddress(tenant?.email, "Saved tenant email");
+      if (from.toLowerCase() !== expectedFrom.toLowerCase() || to.toLowerCase() !== expectedTo.toLowerCase()) {
+        throw new Error("The sender or recipient changed. Close this dialog and review the saved contact details.");
+      }
+      const subject = assertSafeHeaderValue(els.emailSubject.value, "Subject", 180);
+      const body = String(els.emailBody.value || "").trim();
+      if (!body) throw new Error("Enter an email message before sending.");
+      if (body.length > 200000) throw new Error("The email message is too long to send safely.");
+
+      if (!emailAccessToken) {
+        setEmailDialogStatus("Google confirmation is required before this email can send.");
+        await requestEmailAccess(appSettings.emailRemembered ? "" : "consent");
+      }
+      if (!emailAccountEmail) {
+        const account = await fetchEmailAccount();
+        emailAccountEmail = validateEmailAddress(account.email, "Google account");
+        appSettings.emailRemembered = true;
+        localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+        renderEmailStatus();
+        updateEmailDialogAccount();
+      }
+
+      invoice = assertEmailDialogCurrent();
+      const reviewedMessage = buildInvoiceEmail(purpose, invoice);
+      const attachment = reviewedMessage.attachPdf
+        ? {
+            blob: createInvoicePdfBlob(invoice),
+            fileName: reviewedMessage.attachmentName,
+          }
+        : null;
+      const raw = await buildGmailRawMessage({ from, to, subject, body, attachment });
+      assertEmailDialogCurrent();
+      setEmailDialogStatus(`Sending through Gmail as ${emailAccountEmail}...`);
+      let response;
+      let responseBody;
+      try {
+        response = await fetchEmailRequest(
+          EMAIL_SEND_URL,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${emailAccessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ raw }),
+          },
+          EMAIL_SEND_TIMEOUT_MS,
+          true
+        );
+        responseBody = await readEmailApiResponse(response);
+      } catch (error) {
+        error.deliveryUncertain = true;
+        throw error;
+      }
+      if (!response.ok) {
+        const error = new Error(`GMAIL_SEND_${response.status}`);
+        error.status = response.status;
+        error.responseBody = responseBody;
+        throw error;
+      }
+      if (!responseBody?.id) {
+        const error = new Error("GMAIL_SEND_UNCONFIRMED");
+        error.deliveryUncertain = true;
+        throw error;
+      }
+
+      persistEmailAudit({
+        purpose,
+        invoiceNumber: invoice.invoiceNumber || "Invoice",
+        sender: from,
+        recipient: to,
+        gmailMessageId: responseBody.id,
+      });
+      emailDialogState.sentMessageId = responseBody.id;
+      setEmailDialogStatus(`Sent to ${to} through Gmail.`, "success");
+      showToast("Email sent.");
+    } catch (error) {
+      console.error(error);
+      handleEmailSendError(error);
+    } finally {
+      emailSendInFlight = false;
+      renderEmailStatus();
+      updateEmailDialogControls();
+    }
   }
 
-  function invoiceMailtoHref(invoice) {
-    const tenant = getTenant(invoice.tenantId);
-    const email = String(tenant?.email || "").trim();
-    if (!email) return "";
-    return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(
-      invoiceMessageSubject(invoice)
-    )}&body=${encodeURIComponent(invoiceMessage(invoice))}`;
+  function assertEmailDialogCurrent() {
+    if (!emailDialogState) throw new Error("Close and reopen the email review.");
+    if (stateReplacementIsPending()) {
+      throw new Error("Data was replaced in another tab. Close this email and review the current invoice before sending.");
+    }
+    const invoice = state.invoices.find((item) => item.id === emailDialogState.invoiceId);
+    const tenant = invoice ? getTenant(invoice.tenantId) : null;
+    if (!invoice || emailInvoiceFingerprint(invoice, tenant, state.landlord) !== emailDialogState.fingerprint) {
+      throw new Error("Invoice or contact details changed. Close this email and review the current data before sending.");
+    }
+    const storedFingerprint = storedEmailInvoiceFingerprint(emailDialogState.invoiceId);
+    if (!storedFingerprint || storedFingerprint !== emailDialogState.fingerprint) {
+      throw new Error("Invoice data changed in another tab. Close this email and review it again before sending.");
+    }
+    if (!availableEmailPurposes(invoice).includes(els.emailPurpose.value)) {
+      throw new Error("This email context is no longer valid for the invoice.");
+    }
+    return invoice;
+  }
+
+  function emailInvoiceFingerprint(invoice, tenant, landlord) {
+    if (!invoice) return "";
+    return JSON.stringify({
+      invoice: {
+        id: String(invoice.id || ""),
+        tenantId: String(invoice.tenantId || ""),
+        invoiceType: normalizeInvoiceType(invoice.invoiceType),
+        invoiceNumber: String(invoice.invoiceNumber || ""),
+        issueDate: String(invoice.issueDate || ""),
+        dueDate: String(invoice.dueDate || ""),
+        billingPeriod: String(invoice.billingPeriod || ""),
+        lineItems: (Array.isArray(invoice.lineItems) ? invoice.lineItems : []).map((item) => ({
+          type: String(item?.type || ""),
+          description: String(item?.description || ""),
+          amount: toNumber(item?.amount),
+        })),
+        utilityCalculation: normalizeUtilityCalculation(invoice.utilityCalculation),
+        previousBalance: toNumber(invoice.previousBalance),
+        credits: toNumber(invoice.credits),
+        payments: (Array.isArray(invoice.payments) ? invoice.payments : []).map((payment) => ({
+          date: String(payment?.date || ""),
+          amount: toNumber(payment?.amount),
+          method: String(payment?.method || "Payment"),
+        })),
+        status: normalizeInvoiceStatus(invoice.status),
+        notes: String(invoice.notes || ""),
+        paymentInstructions: String(invoice.paymentInstructions || ""),
+      },
+      tenant: tenant
+        ? {
+            name: String(tenant.name || ""),
+            unit: String(tenant.unit || ""),
+            address: String(tenant.address || ""),
+            email: String(tenant.email || ""),
+            phone: String(tenant.phone || ""),
+          }
+        : null,
+      landlord: {
+        name: String(landlord?.name || ""),
+        address: String(landlord?.address || ""),
+        email: String(landlord?.email || ""),
+        phone: String(landlord?.phone || ""),
+        paymentInstructions: String(landlord?.paymentInstructions || ""),
+      },
+    });
+  }
+
+  function storedEmailInvoiceFingerprint(invoiceId) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      const invoices = Array.isArray(stored.invoices) ? stored.invoices : [];
+      const tenants = Array.isArray(stored.tenants) ? stored.tenants : [];
+      const invoice = invoices.find((item) => item?.id === invoiceId);
+      const tenant = invoice ? tenants.find((item) => item?.id === invoice.tenantId) : null;
+      return emailInvoiceFingerprint(invoice, tenant, stored.landlord || {});
+    } catch (error) {
+      console.warn("Unable to verify the saved invoice before email.", error);
+      return "";
+    }
+  }
+
+  function validateEmailAddress(value, label) {
+    const email = String(value || "").trim();
+    assertSafeHeaderValue(email, label);
+    if (
+      email.length > 254 ||
+      !/^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+$/i.test(email)
+    ) {
+      throw new Error(`${label} is missing or invalid.`);
+    }
+    return email;
+  }
+
+  function assertSafeHeaderValue(value, label, maxLength = 998) {
+    const text = String(value || "").trim();
+    if (!text) throw new Error(`${label} is required.`);
+    if (/[\r\n\u0000]/.test(text)) throw new Error(`${label} contains an unsafe line break.`);
+    if (text.length > maxLength) throw new Error(`${label} is too long.`);
+    return text;
+  }
+
+  async function buildGmailRawMessage(message) {
+    const from = validateEmailAddress(message?.from, "From address");
+    const to = validateEmailAddress(message?.to, "Recipient");
+    const subject = assertSafeHeaderValue(message?.subject, "Subject", 180);
+    const body = String(message?.body || "").replace(/\r?\n/g, "\r\n");
+    const headers = [
+      "MIME-Version: 1.0",
+      `From: <${from}>`,
+      `To: <${to}>`,
+      `Subject: ${encodeMimeHeader(subject)}`,
+    ];
+    let mime = "";
+
+    if (!message?.attachment) {
+      mime = [
+        ...headers,
+        'Content-Type: text/plain; charset="UTF-8"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrapMimeBase64(textToBase64(body)),
+      ].join("\r\n");
+    } else {
+      const boundary = `rent-ledger-${cryptoId().replace(/[^A-Za-z0-9-]/g, "")}`;
+      const fileName = sanitizeEmailAttachmentName(message.attachment.fileName);
+      const fallbackName = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "invoice.pdf";
+      const encodedName = encodeURIComponent(fileName).replace(/[!'()*]/g, (character) =>
+        `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+      );
+      const attachmentBytes = new Uint8Array(await message.attachment.blob.arrayBuffer());
+      mime = [
+        ...headers,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrapMimeBase64(textToBase64(body)),
+        `--${boundary}`,
+        `Content-Type: application/pdf; name="${fallbackName}"`,
+        `Content-Disposition: attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrapMimeBase64(bytesToBase64(attachmentBytes)),
+        `--${boundary}--`,
+        "",
+      ].join("\r\n");
+    }
+    return base64UrlFromBase64(bytesToBase64(new TextEncoder().encode(mime)));
+  }
+
+  function sanitizeEmailAttachmentName(value) {
+    const name = String(value || "invoice.pdf")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/[<>:"/\\|?*]/g, "-")
+      .trim();
+    const withExtension = name.toLowerCase().endsWith(".pdf") ? name : `${name || "invoice"}.pdf`;
+    return withExtension.slice(0, 180);
+  }
+
+  function textToBase64(value) {
+    return bytesToBase64(new TextEncoder().encode(String(value || "")));
+  }
+
+  function encodeMimeHeader(value) {
+    const chunks = [];
+    let chunk = "";
+    for (const character of String(value || "")) {
+      const candidate = `${chunk}${character}`;
+      if (chunk && new TextEncoder().encode(candidate).length > 45) {
+        chunks.push(chunk);
+        chunk = character;
+      } else {
+        chunk = candidate;
+      }
+    }
+    if (chunk) chunks.push(chunk);
+    return chunks.map((part) => `=?UTF-8?B?${textToBase64(part)}?=`).join("\r\n ");
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return window.btoa(binary);
+  }
+
+  function wrapMimeBase64(value) {
+    return String(value || "").match(/.{1,76}/g)?.join("\r\n") || "";
+  }
+
+  function base64UrlFromBase64(value) {
+    return String(value || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  async function readEmailApiResponse(response) {
+    const text = await response.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return { text };
+    }
+  }
+
+  async function fetchEmailRequest(url, options, timeoutMs, deliveryUncertain = false) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const timeoutError = new Error("EMAIL_REQUEST_TIMEOUT");
+        timeoutError.deliveryUncertain = deliveryUncertain;
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  function handleEmailSendError(error) {
+    const status = Number(error?.status || 0);
+    const message = String(error?.message || "");
+    if (message.startsWith("EMAIL_USERINFO_") || message === "EMAIL_ACCOUNT_UNVERIFIED") {
+      emailAccessToken = "";
+      emailAccountEmail = "";
+      setEmailDialogStatus("The authorized Google account could not be verified. Reconnect Gmail; no email was sent.", "error");
+      return;
+    }
+    if (message === "EMAIL_REQUEST_TIMEOUT" && !error?.deliveryUncertain) {
+      setEmailDialogStatus("Google account verification timed out before sending. Check your connection and try again.", "error");
+      return;
+    }
+    if (status === 401) {
+      emailAccessToken = "";
+      emailAccountEmail = "";
+      setEmailDialogStatus("Gmail authorization expired. Connect again; no email was confirmed sent.", "error");
+      return;
+    }
+    if (status === 403) {
+      setEmailDialogStatus(
+        "Gmail rejected the sender or permission. Confirm the landlord email is a verified Send mail as alias, then reconnect.",
+        "error"
+      );
+      return;
+    }
+    if (status === 429) {
+      setEmailDialogStatus("Gmail is rate limiting sends. Wait before trying again; no email was confirmed sent.", "error");
+      return;
+    }
+    if (status >= 500 || error?.deliveryUncertain) {
+      if (emailDialogState) emailDialogState.deliveryUncertain = true;
+      setEmailDialogStatus(
+        "Delivery could not be confirmed. Check Gmail Sent before trying again so the tenant does not receive a duplicate.",
+        "error"
+      );
+      return;
+    }
+    if (status === 400) {
+      setEmailDialogStatus(
+        "Gmail rejected the email. Confirm the landlord email is a verified Send mail as alias and review the addresses.",
+        "error"
+      );
+      return;
+    }
+    if (error instanceof TypeError) {
+      setEmailDialogStatus("Google could not be reached before sending. Check your connection; no email was sent.", "error");
+      return;
+    }
+    if (
+      message.includes("popup") ||
+      message.includes("access_denied") ||
+      message.includes("EMAIL_OAUTH") ||
+      message.includes("EMAIL_TOKEN")
+    ) {
+      setEmailDialogStatus("Google authorization was cancelled or failed. No email was sent.", "error");
+      return;
+    }
+    setEmailDialogStatus(message || "Email could not be sent. No email was confirmed sent.", "error");
+  }
+
+  function persistEmailAudit(details) {
+    if (stateReplacementIsPending()) reloadAfterExternalStateReplacement();
+    mergeLatestAuditEvents();
+    const event = {
+      id: cryptoId(),
+      createdAt: new Date().toISOString(),
+      type: "email",
+      message: `Sent ${emailPurposeLabel(details.purpose)} for ${details.invoiceNumber} to ${details.recipient}.`,
+      tenantCount: state.tenants.length,
+      invoiceCount: state.invoices.length,
+      emailPurpose: details.purpose,
+      invoiceNumber: String(details.invoiceNumber || ""),
+      sender: String(details.sender || ""),
+      recipient: String(details.recipient || ""),
+    };
+    state.auditEvents = [event, ...normalizeAuditEvents(state.auditEvents)].slice(0, MAX_AUDIT_EVENTS);
+    if (saveState(event.message, { audit: false })) return true;
+    console.warn("Email was sent, but its local audit event could not be saved.");
+    return false;
+  }
+
+  function emailPurposeLabel(purpose) {
+    if (purpose === "new_invoice") return "new invoice email";
+    if (purpose === "payment_received") return "payment received email";
+    return "payment reminder email";
   }
 
   function tenantDisplayLabel(tenant) {
@@ -2200,7 +2939,7 @@
         </div>
         <div class="card-actions">
           <button class="small-button" data-load-invoice="${escapeAttr(invoice.id)}" type="button">Open</button>
-          <button class="small-button" data-copy-invoice-message="${escapeAttr(invoice.id)}" type="button">Message</button>
+          ${renderInvoiceEmailAction(invoice, "workflow")}
           <button class="small-button" data-toggle-paid-invoice="${escapeAttr(invoice.id)}" data-paid="${
             paid ? "false" : "true"
           }" type="button">${paid ? "Reopen" : "Mark paid"}</button>
@@ -2440,15 +3179,15 @@
     const paidButton = event.target.closest("[data-toggle-paid-invoice]");
     const loadButton = event.target.closest("[data-load-invoice]");
     const deleteButton = event.target.closest("[data-delete-invoice]");
-    const messageButton = event.target.closest("[data-copy-invoice-message]");
+    const emailButton = event.target.closest("[data-email-invoice]");
 
     if (paidButton) {
       setInvoicePaid(paidButton.dataset.togglePaidInvoice, paidButton.dataset.paid === "true");
       return;
     }
 
-    if (messageButton) {
-      copyInvoiceMessage(messageButton.dataset.copyInvoiceMessage);
+    if (emailButton) {
+      openEmailDialog(emailButton.dataset.emailInvoice, emailButton.dataset.emailPurpose);
       return;
     }
 
@@ -2657,6 +3396,12 @@
     renderDriveStatus();
   }
 
+  function fillEmailSettingsForm() {
+    if (!els.emailGoogleClientId) return;
+    els.emailGoogleClientId.value = appSettings.emailGoogleClientId || "";
+    renderEmailStatus();
+  }
+
   function saveDriveSettings(showMessage) {
     const previousClientId = appSettings.googleClientId;
     const previousAutoSync = Boolean(appSettings.driveAutoSync);
@@ -2712,6 +3457,153 @@
     } else {
       els.driveStatus.textContent = "Not connected. Click Connect Drive.";
     }
+  }
+
+  function saveEmailSettings(showMessage) {
+    if (!els.emailGoogleClientId) return;
+    const previousClientId = appSettings.emailGoogleClientId;
+    const nextClientId = cleanGoogleClientId(els.emailGoogleClientId.value);
+    els.emailGoogleClientId.value = nextClientId;
+    appSettings = {
+      ...appSettings,
+      emailGoogleClientId: nextClientId,
+    };
+    if (previousClientId !== nextClientId) {
+      emailAccessToken = "";
+      emailTokenClient = null;
+      emailAccountEmail = "";
+      appSettings.emailRemembered = false;
+    }
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    renderEmailStatus();
+    updateEmailDialogAccount();
+    if (showMessage) showToast("Email settings saved.");
+  }
+
+  function renderEmailStatus(message) {
+    if (!els.emailStatus || !els.connectEmail) return;
+    const candidateClientId = cleanGoogleClientId(els.emailGoogleClientId?.value || appSettings.emailGoogleClientId);
+    const allowed = emailOriginAllowed();
+    const validClientId = isValidGoogleClientId(candidateClientId);
+    els.connectEmail.disabled = !allowed || !validClientId;
+    if (message) {
+      els.emailStatus.textContent = message;
+    } else if (!allowed) {
+      els.emailStatus.textContent = `Direct email is disabled on this address. Use ${EMAIL_PRODUCTION_ORIGIN}.`;
+    } else if (!candidateClientId) {
+      els.emailStatus.textContent = "Setup needed: add the dedicated Gmail OAuth client ID.";
+    } else if (!validClientId) {
+      els.emailStatus.textContent = "Setup needed: Gmail OAuth client ID is invalid.";
+    } else if (emailAccessToken && emailAccountEmail) {
+      els.emailStatus.textContent = `Connected as ${emailAccountEmail}. Ready to send reviewed emails.`;
+    } else if (appSettings.emailRemembered) {
+      els.emailStatus.textContent = "Previously connected. Click Connect Gmail to authorize this browser session.";
+    } else {
+      els.emailStatus.textContent = "Not connected. Click Connect Gmail.";
+    }
+    updateEmailDialogControls();
+  }
+
+  function emailOriginAllowed() {
+    if (window.location.origin === EMAIL_PRODUCTION_ORIGIN) return true;
+    const testOrigin = window.__RENT_LEDGER_EMAIL_TEST_ORIGIN__;
+    const localTestHost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
+    return (
+      window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ === true &&
+      localTestHost &&
+      typeof testOrigin === "string" &&
+      testOrigin === window.location.origin
+    );
+  }
+
+  async function connectEmail() {
+    saveEmailSettings(false);
+    if (!emailOriginAllowed()) {
+      renderEmailStatus(`Direct email is available only at ${EMAIL_PRODUCTION_ORIGIN}.`);
+      showToast("Direct email is unavailable on this address.");
+      return;
+    }
+    if (!isValidGoogleClientId(appSettings.emailGoogleClientId)) {
+      renderEmailStatus("Setup needed: add a valid dedicated Gmail OAuth client ID.");
+      showToast("Add the Gmail OAuth client ID first.");
+      return;
+    }
+
+    try {
+      renderEmailStatus("Opening Gmail connection...");
+      await requestEmailAccess(appSettings.emailRemembered ? "" : "consent");
+      const account = await fetchEmailAccount();
+      emailAccountEmail = validateEmailAddress(account.email, "Google account");
+      appSettings.emailRemembered = true;
+      localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+      renderEmailStatus();
+      updateEmailDialogAccount();
+      showToast(`Gmail connected as ${emailAccountEmail}.`);
+    } catch (error) {
+      console.error(error);
+      emailAccessToken = "";
+      emailAccountEmail = "";
+      renderEmailStatus(emailConnectionErrorMessage(error));
+      updateEmailDialogAccount();
+      showToast("Gmail connection failed.");
+    }
+  }
+
+  async function requestEmailAccess(prompt = "") {
+    if (!emailOriginAllowed()) throw new Error("EMAIL_ORIGIN_BLOCKED");
+    if (!isValidGoogleClientId(appSettings.emailGoogleClientId)) throw new Error("EMAIL_CLIENT_ID_INVALID");
+    await loadGoogleIdentityServices();
+    return new Promise((resolve, reject) => {
+      emailTokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: appSettings.emailGoogleClientId,
+        scope: EMAIL_SCOPES,
+        callback: () => {},
+        error_callback: (error) => reject(new Error(error?.type || error?.message || "EMAIL_OAUTH_FAILED")),
+      });
+      emailTokenClient.callback = (response) => {
+        if (response.error) {
+          reject(new Error(response.error));
+          return;
+        }
+        emailAccessToken = String(response.access_token || "");
+        if (!emailAccessToken) {
+          reject(new Error("EMAIL_TOKEN_MISSING"));
+          return;
+        }
+        resolve(emailAccessToken);
+      };
+      emailTokenClient.requestAccessToken({ prompt });
+    });
+  }
+
+  async function fetchEmailAccount() {
+    const response = await fetchEmailRequest(
+      EMAIL_USERINFO_URL,
+      { headers: { Authorization: `Bearer ${emailAccessToken}` } },
+      EMAIL_ACCOUNT_TIMEOUT_MS
+    );
+    if (!response.ok) {
+      const error = new Error(`EMAIL_USERINFO_${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    const profile = await response.json();
+    if (!profile?.email || profile.verified_email === false) throw new Error("EMAIL_ACCOUNT_UNVERIFIED");
+    return profile;
+  }
+
+  function emailConnectionErrorMessage(error) {
+    const status = Number(error?.status || 0);
+    if (status === 401 || status === 403) return "Gmail authorization was denied or expired. Click Connect Gmail.";
+    if (String(error?.message || "").includes("popup_closed")) return "Gmail connection was cancelled.";
+    return "Gmail connection was cancelled or failed. Try Connect Gmail again.";
+  }
+
+  function updateEmailDialogAccount() {
+    if (!els.emailAccount) return;
+    els.emailAccount.value = emailAccountEmail;
+    if (emailDialogState) setEmailDialogStatus(emailDialogReadyMessage());
+    updateEmailDialogControls();
   }
 
   function syncDraftFromForm() {
@@ -3195,6 +4087,10 @@
         googleClientId: isValidGoogleClientId(storedClientId)
           ? storedClientId
           : DEFAULT_GOOGLE_CLIENT_ID,
+        emailGoogleClientId: isValidGoogleClientId(parsed.emailGoogleClientId)
+          ? cleanGoogleClientId(parsed.emailGoogleClientId)
+          : "",
+        emailRemembered: Boolean(parsed.emailRemembered),
         driveAutoSync: Boolean(parsed.driveAutoSync),
         driveRemembered,
         driveFolderId: String(parsed.driveFolderId || "").trim(),
@@ -3206,6 +4102,8 @@
       console.warn("Unable to load Rent Ledger settings.", error);
       return {
         googleClientId: DEFAULT_GOOGLE_CLIENT_ID,
+        emailGoogleClientId: "",
+        emailRemembered: false,
         driveAutoSync: false,
         driveRemembered: false,
         driveFolderId: "",
@@ -3431,6 +4329,7 @@
   function auditTypeForReason(reason) {
     const lower = String(reason || "").toLowerCase();
     if (lower.includes("delete")) return "delete";
+    if (lower.includes("email")) return "email";
     if (lower.includes("payment") || lower.includes("paid") || lower.includes("reopened")) return "payment";
     if (lower.includes("import") || lower.includes("loaded") || lower.includes("restored")) return "import";
     if (lower.includes("drive")) return "drive";
@@ -4883,6 +5782,10 @@
         message: String(event?.message || event?.reason || "Saved data"),
         tenantCount: Number.isFinite(Number(event?.tenantCount)) ? Number(event.tenantCount) : 0,
         invoiceCount: Number.isFinite(Number(event?.invoiceCount)) ? Number(event.invoiceCount) : 0,
+        ...(event?.emailPurpose ? { emailPurpose: String(event.emailPurpose) } : {}),
+        ...(event?.invoiceNumber ? { invoiceNumber: String(event.invoiceNumber) } : {}),
+        ...(event?.sender ? { sender: String(event.sender) } : {}),
+        ...(event?.recipient ? { recipient: String(event.recipient) } : {}),
       }))
       .filter((event) => event.message)
       .slice(0, MAX_AUDIT_EVENTS);
@@ -5119,10 +6022,15 @@
 
   if (window.__RENT_LEDGER_ENABLE_TEST_HOOKS__) {
     window.__rentLedgerTest = {
+      buildGmailRawMessage,
+      buildInvoiceEmail,
       createInvoicePdfBlob,
       currentCycleSummary,
+      emailPurposeForInvoice,
       importDriveStateFile,
       invoiceArtifactFingerprint,
+      openEmailDialog,
+      sendInvoiceEmail,
       withDriveStateLock,
     };
   }

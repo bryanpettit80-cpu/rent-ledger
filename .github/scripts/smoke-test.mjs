@@ -25,6 +25,84 @@ function assert(condition, message) {
   if (!condition) failures.push(message);
 }
 
+function decodeBase64Url(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return Buffer.from(padded, "base64");
+}
+
+function mimeHeaderValue(source, name) {
+  const headerBlock = String(source || "").split(/\r?\n\r?\n/, 1)[0].replace(/\r?\n[ \t]+/g, " ");
+  const match = headerBlock.match(new RegExp(`^${name}:\\s*(.+)$`, "im"));
+  return match?.[1]?.trim() || "";
+}
+
+function decodeMimeHeader(value) {
+  const encodedWords = [...String(value || "").matchAll(/=\?UTF-8\?B\?([^?]+)\?=/gi)];
+  if (!encodedWords.length) return String(value || "");
+  return encodedWords.map((match) => Buffer.from(match[1], "base64").toString("utf8")).join("");
+}
+
+function decodeQuotedPrintable(value) {
+  const bytes = [];
+  const source = String(value || "").replace(/=\r?\n/g, "");
+  for (let index = 0; index < source.length; index += 1) {
+    const pair = source.slice(index + 1, index + 3);
+    if (source[index] === "=" && /^[0-9A-F]{2}$/i.test(pair)) {
+      bytes.push(Number.parseInt(pair, 16));
+      index += 2;
+    } else {
+      bytes.push(...Buffer.from(source[index], "utf8"));
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+function decodeMimePartBody(part) {
+  const source = String(part || "");
+  const body = source.replace(/^[\s\S]*?\r?\n\r?\n/, "");
+  const encoding = mimeHeaderValue(source, "Content-Transfer-Encoding").toLowerCase();
+  if (encoding === "base64") return Buffer.from(body.replace(/\s/g, ""), "base64").toString("utf8");
+  if (encoding === "quoted-printable") return decodeQuotedPrintable(body);
+  return body;
+}
+
+function textBodyFromMime(source) {
+  const contentType = mimeHeaderValue(source, "Content-Type");
+  const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i)?.slice(1).find(Boolean);
+  if (!boundary) return decodeMimePartBody(source).trim();
+  const textPart = String(source)
+    .split(`--${boundary}`)
+    .find((part) => /^Content-Type:\s*text\/plain\b/im.test(part));
+  return decodeMimePartBody(textPart || "").trim();
+}
+
+function pdfAttachmentsFromMime(source) {
+  const contentType = mimeHeaderValue(source, "Content-Type");
+  const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i)?.slice(1).find(Boolean);
+  if (!boundary) return [];
+  return String(source)
+    .split(`--${boundary}`)
+    .filter((part) => /^Content-Type:\s*application\/pdf\b/im.test(part))
+    .map((part) => {
+      const body = part.replace(/^[\s\S]*?\r?\n\r?\n/, "").replace(/\s/g, "");
+      const disposition = mimeHeaderValue(part, "Content-Disposition");
+      const encodedFilename = disposition.match(/filename\*=UTF-8''([^;\s]+)/i)?.[1] || "";
+      let filename = disposition.match(/filename=(?:"([^"]+)"|([^;\s]+))/i)?.slice(1).find(Boolean) || "";
+      if (encodedFilename) {
+        try {
+          filename = decodeURIComponent(encodedFilename);
+        } catch {
+          filename = encodedFilename;
+        }
+      }
+      return {
+        filename,
+        bytes: Buffer.from(body, "base64"),
+      };
+    });
+}
+
 function monthLabel(date) {
   return new Intl.DateTimeFormat("en-US", {
     month: "long",
@@ -130,6 +208,605 @@ function makeSmokeInvoice({
     status,
     updatedAt,
   };
+}
+
+async function runEmailSmokeTests() {
+  const emailContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    deviceScaleFactor: 3,
+    serviceWorkers: "block",
+  });
+  const gmailRequests = [];
+  const userinfoRequests = [];
+  let gmailResponse = { status: 200, body: JSON.stringify({ id: "gmail-message-1", threadId: "gmail-thread-1" }) };
+
+  await emailContext.addInitScript((version) => {
+    window.__RENT_LEDGER_ENABLE_TEST_HOOKS__ = true;
+    window.__RENT_LEDGER_EMAIL_TEST_ORIGIN__ = window.location.origin;
+    window.__rentLedgerEmailMock = {
+      mode: "success",
+      tokenRequests: [],
+      token: "email-test-access-token",
+    };
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient(configuration) {
+            const client = {
+              callback: configuration.callback,
+              requestAccessToken(options = {}) {
+                window.__rentLedgerEmailMock.tokenRequests.push({
+                  scope: configuration.scope || "",
+                  prompt: options.prompt || "",
+                });
+                const response =
+                  window.__rentLedgerEmailMock.mode === "success"
+                    ? { access_token: window.__rentLedgerEmailMock.token, expires_in: 3600 }
+                    : { error: "access_denied" };
+                setTimeout(() => client.callback(response), 0);
+              },
+            };
+            return client;
+          },
+        },
+      },
+    };
+    sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+    sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+  }, appVersion);
+
+  await emailContext.route("**/sw.js", (route) => route.abort());
+  await emailContext.route("https://www.googleapis.com/oauth2/v3/userinfo**", async (route) => {
+    userinfoRequests.push({
+      authorization: route.request().headers().authorization || "",
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ email: "owner@example.com", verified_email: true }),
+    });
+  });
+  await emailContext.route("https://gmail.googleapis.com/gmail/v1/users/me/messages/send**", async (route) => {
+    const request = route.request();
+    let payload = {};
+    try {
+      payload = request.postDataJSON();
+    } catch {
+      payload = {};
+    }
+    gmailRequests.push({
+      authorization: request.headers().authorization || "",
+      payload,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    await route.fulfill({
+      status: gmailResponse.status,
+      contentType: "application/json",
+      body: gmailResponse.body,
+    });
+  });
+
+  const emailPage = await emailContext.newPage();
+  const emailPageErrors = [];
+  emailPage.on("pageerror", (error) => emailPageErrors.push(error?.stack || error?.message || String(error)));
+
+  const fixtureState = makeSmokeState({
+    landlordName: "Ledger Manager",
+    invoices: [
+      makeSmokeInvoice({
+        id: "email-open",
+        tenantId: "andrew",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2099-01-0001",
+        billingPeriod: "January 2099",
+        amount: 850,
+        issueDate: "2099-01-01",
+        dueDate: "2099-01-15",
+        updatedAt: "2026-07-29T12:00:00.000Z",
+      }),
+      makeSmokeInvoice({
+        id: "email-partial",
+        tenantId: "andrew",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2099-01-0002",
+        billingPeriod: "January 2099",
+        amount: 900,
+        status: "partial",
+        issueDate: "2099-01-01",
+        dueDate: "2099-01-15",
+        payments: [
+          {
+            id: "email-partial-payment",
+            date: "2026-07-28",
+            amount: 250,
+            method: "Partial payment",
+          },
+        ],
+        updatedAt: "2026-07-29T13:00:00.000Z",
+      }),
+      makeSmokeInvoice({
+        id: "email-paid",
+        tenantId: "andrew",
+        invoiceType: "utility",
+        invoiceNumber: "UTL-2099-01-0003",
+        billingPeriod: "January 2099",
+        amount: 300,
+        status: "paid",
+        issueDate: "2099-01-01",
+        dueDate: "2099-01-15",
+        payments: [
+          {
+            id: "email-full-payment",
+            date: "2026-07-29",
+            amount: 300,
+            method: "Full payment",
+          },
+        ],
+        updatedAt: "2026-07-29T14:00:00.000Z",
+      }),
+      makeSmokeInvoice({
+        id: "email-legacy-paid",
+        tenantId: "andrew",
+        invoiceType: "rent",
+        invoiceNumber: "RNT-2098-12-0004",
+        billingPeriod: "December 2098",
+        amount: 850,
+        status: "paid",
+        issueDate: "2098-12-01",
+        dueDate: "2098-12-15",
+        payments: [],
+        updatedAt: "2025-01-01T12:00:00.000Z",
+      }),
+    ],
+  });
+  fixtureState.landlord = {
+    ...fixtureState.landlord,
+    address: "99 Standard Signature Lane",
+    email: "owner@example.com",
+    phone: "555-0109",
+    paymentInstructions: "Pay by ACH using account ending 1234.",
+  };
+  fixtureState.tenants[0] = {
+    ...fixtureState.tenants[0],
+    name: "José Núñez",
+    email: "tenant@example.com",
+  };
+
+  const emailClientId = "123456789012-rentledgeremail.apps.googleusercontent.com";
+  const waitForGmailCount = async (expected) => {
+    for (let attempt = 0; attempt < 80 && gmailRequests.length < expected; attempt += 1) {
+      await emailPage.waitForTimeout(25);
+    }
+    return gmailRequests.length;
+  };
+  const emailAuditCount = async (page = emailPage) =>
+    page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+      return (state.auditEvents || []).filter((event) => event.type === "email").length;
+    });
+  const waitForEmailAuditCount = async (expected, page = emailPage) =>
+    page.waitForFunction(
+      (count) => {
+        const state = JSON.parse(localStorage.getItem("rent-ledger:v1") || "{}");
+        return (
+          (state.auditEvents || []).filter((event) => event.type === "email").length === count
+        );
+      },
+      expected
+    );
+  const closeEmailDialog = async (page = emailPage) => {
+    const dialogOpen = await page.locator("#emailDialog").evaluate((dialog) => !dialog.hidden).catch(() => false);
+    if (dialogOpen) await page.click("#emailCancel");
+  };
+  const openInvoiceEmail = async (invoiceId, purpose, page = emailPage) => {
+    const selector = `[data-email-invoice="${invoiceId}"][data-email-purpose="${purpose}"]`;
+    await page.locator(selector).first().click();
+    await page.waitForFunction(() => document.getElementById("emailDialog")?.hidden === false);
+  };
+
+  try {
+    await emailPage.goto(baseUrl, { waitUntil: "networkidle" });
+    await emailPage.evaluate(
+      ({ state, version, clientId }) => {
+        localStorage.clear();
+        sessionStorage.clear();
+        localStorage.setItem("rent-ledger:v1", JSON.stringify(state));
+        localStorage.setItem(
+          "rent-ledger:settings:v1",
+          JSON.stringify({
+            emailGoogleClientId: clientId,
+            emailClientId: clientId,
+          })
+        );
+        sessionStorage.setItem(`rent-ledger:splash-seen:${version}`, "true");
+        sessionStorage.setItem(`rent-ledger:refreshed:${version}`, "1");
+        history.replaceState(null, "", "#settings");
+      },
+      { state: fixtureState, version: appVersion, clientId: emailClientId }
+    );
+    await emailPage.reload({ waitUntil: "networkidle" });
+    await emailPage.locator(".email-tools details.advanced-settings").evaluate((details) => {
+      details.open = true;
+    });
+    await emailPage.fill("#emailGoogleClientId", emailClientId);
+    await emailPage.click("#connectEmail");
+    await emailPage.waitForFunction(() => /owner@example\.com/i.test(document.getElementById("emailStatus")?.textContent || ""));
+
+    const authState = await emailPage.evaluate(() => ({
+      scopes: window.__rentLedgerEmailMock.tokenRequests.map((request) => request.scope),
+      settings: localStorage.getItem("rent-ledger:settings:v1") || "",
+      storageDump: [localStorage, sessionStorage]
+        .flatMap((storage) => Object.keys(storage).map((key) => storage.getItem(key) || ""))
+        .join("\n"),
+    }));
+    assert(
+      authState.scopes.some(
+        (scope) =>
+          scope
+            .split(/\s+/)
+            .filter(Boolean)
+            .sort()
+            .join(" ") ===
+          [
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/userinfo.email",
+          ]
+            .sort()
+            .join(" ")
+      ),
+      `Email OAuth must request only gmail.send and userinfo.email, got ${authState.scopes.join(" | ")}.`
+    );
+    assert(
+      userinfoRequests.some((request) => request.authorization === "Bearer email-test-access-token"),
+      "Email connection must verify the authenticated Google account with its in-memory token."
+    );
+    assert(authState.settings.includes(emailClientId), "Email connection must save the edited Gmail OAuth client ID.");
+    assert(
+      !authState.storageDump.includes("email-test-access-token"),
+      "Email OAuth access tokens must remain in memory and never enter browser storage."
+    );
+
+    await emailPage.click('[data-view="invoices"]');
+    await emailPage.waitForFunction(() => document.querySelectorAll("#invoiceHistory .invoice-card").length === 4);
+    const invoiceActionState = await emailPage.evaluate(() => ({
+      emailActions: [...document.querySelectorAll("#invoiceHistory [data-email-invoice]")].map((button) => ({
+        text: button.textContent.trim(),
+        invoiceId: button.dataset.emailInvoice,
+        purpose: button.dataset.emailPurpose,
+      })),
+      legacyMessageActions: [...document.querySelectorAll("#invoiceHistory button")].filter(
+        (button) => button.textContent.trim() === "Message"
+      ).length,
+      unavailableEmailActions: [...document.querySelectorAll("#invoiceHistory button")].filter(
+        (button) => button.textContent.trim() === "Email unavailable" && button.disabled
+      ).length,
+    }));
+    assert(
+      invoiceActionState.emailActions.length === 3,
+      `Invoices with usable context must expose an Email action, got ${JSON.stringify(invoiceActionState)}.`
+    );
+    assert(
+      invoiceActionState.emailActions.every((action) => action.text === "Email"),
+      `Saved invoice communication actions must say Email, got ${invoiceActionState.emailActions
+        .map((action) => action.text)
+        .join("|")}.`
+    );
+    assert(invoiceActionState.legacyMessageActions === 0, "Saved invoices must not retain clipboard-backed Message actions.");
+    assert(
+      invoiceActionState.unavailableEmailActions === 1,
+      `Legacy paid invoices without payment details must not invent a payment email, got ${JSON.stringify(
+        invoiceActionState
+      )}.`
+    );
+
+    await openInvoiceEmail("email-open", "new_invoice");
+    const newDialog = await emailPage.evaluate(() => ({
+      purpose: document.getElementById("emailPurpose")?.value,
+      from: document.getElementById("emailFrom")?.value,
+      account: document.getElementById("emailAccount")?.value,
+      to: document.getElementById("emailTo")?.value,
+      subject: document.getElementById("emailSubject")?.value,
+      body: document.getElementById("emailBody")?.value,
+      attachmentHidden: document.getElementById("emailAttachmentRow")?.hidden,
+      attachmentName: document.getElementById("emailAttachmentName")?.textContent?.trim(),
+      sendLabel: document.getElementById("emailSend")?.textContent?.trim(),
+    }));
+    assert(newDialog.purpose === "new_invoice", `Expected new invoice purpose, got ${newDialog.purpose}.`);
+    assert(newDialog.from === "owner@example.com", `Expected landlord From alias, got ${newDialog.from}.`);
+    assert(newDialog.account === "owner@example.com", `Expected authenticated Google account, got ${newDialog.account}.`);
+    assert(newDialog.to === "tenant@example.com", `Expected tenant recipient, got ${newDialog.to}.`);
+    assert(/invoice/i.test(newDialog.subject), `New invoice subject must identify the invoice, got ${newDialog.subject}.`);
+    assert(newDialog.body.includes("José"), "New invoice body must preserve UTF-8 tenant names.");
+    assert(newDialog.body.includes("$850.00"), `New invoice body must include the invoice amount, got ${newDialog.body}.`);
+    assert(
+      newDialog.body.includes("Pay by ACH using account ending 1234."),
+      "New invoice body must include the saved payment instructions."
+    );
+    assert(
+      newDialog.attachmentHidden === false && /\.pdf$/i.test(newDialog.attachmentName),
+      `New invoice review must show its PDF attachment, got ${newDialog.attachmentName}.`
+    );
+    assert(newDialog.sendLabel === "Send", `Email review must require an explicit Send click, got ${newDialog.sendLabel}.`);
+    await emailPage.focus("#emailPurpose");
+    await emailPage.keyboard.press("Shift+Tab");
+    const reverseTabTarget = await emailPage.evaluate(() => document.activeElement?.id || "");
+    await emailPage.keyboard.press("Tab");
+    const forwardTabTarget = await emailPage.evaluate(() => document.activeElement?.id || "");
+    assert(
+      reverseTabTarget === "emailSend" && forwardTabTarget === "emailPurpose",
+      `Email review must trap keyboard focus, got ${reverseTabTarget} then ${forwardTabTarget}.`
+    );
+    const reviewedSubject = `${newDialog.subject} – reviewed`;
+    const reviewedBody = newDialog.body.replace(
+      "\n\nThank you,",
+      "\n\nPlease keep this reviewed invoice for your records.\n\nThank you,"
+    );
+    await emailPage.fill("#emailSubject", reviewedSubject);
+    await emailPage.fill("#emailBody", reviewedBody);
+
+    await emailPage.evaluate(() => {
+      const send = document.getElementById("emailSend");
+      send.click();
+      send.click();
+    });
+    await waitForGmailCount(1);
+    await waitForEmailAuditCount(1);
+    assert(gmailRequests.length === 1, `Duplicate Send clicks must issue one Gmail request, got ${gmailRequests.length}.`);
+    assert(
+      (await emailAuditCount()) === 1,
+      "Successful Gmail sends must add exactly one email audit event when Send is double-clicked."
+    );
+
+    const newMime = decodeBase64Url(gmailRequests[0]?.payload?.raw).toString("utf8");
+    const newBody = textBodyFromMime(newMime).replace(/\r\n/g, "\n");
+    const newAttachments = pdfAttachmentsFromMime(newMime);
+    assert(
+      mimeHeaderValue(newMime, "From") === "<owner@example.com>",
+      "Gmail MIME must use only the reviewed From alias."
+    );
+    assert(
+      mimeHeaderValue(newMime, "To") === "<tenant@example.com>",
+      "Gmail MIME must use only the reviewed tenant recipient."
+    );
+    assert(
+      decodeMimeHeader(mimeHeaderValue(newMime, "Subject")) === reviewedSubject &&
+        mimeHeaderValue(newMime, "MIME-Version") === "1.0",
+      "Gmail raw delivery must preserve the reviewed Subject and emit MIME-Version 1.0."
+    );
+    assert(!/^Cc:/im.test(newMime) && !/^Bcc:/im.test(newMime), "Gmail MIME must not add Cc or Bcc recipients.");
+    assert(
+      gmailRequests[0]?.authorization === "Bearer email-test-access-token",
+      "Gmail send must use the in-memory email access token."
+    );
+    assert(newBody.includes("José"), "Gmail MIME must round-trip UTF-8 body text.");
+    assert(
+      newBody.includes("Please keep this reviewed invoice for your records."),
+      "Gmail MIME must preserve manual edits to the reviewed body."
+    );
+    assert(
+      /Thank you,\s*\nLedger Manager\s*$/.test(newBody) &&
+        !newBody.includes("99 Standard Signature Lane") &&
+        !newBody.includes("555-0109") &&
+        !newBody.includes("Sent from my") &&
+        !newBody.includes("Sincerely"),
+      "Invoice email bodies must use only the simple Rent Ledger sign-off."
+    );
+    assert(
+      newAttachments.length === 1 &&
+        /\.pdf$/i.test(newAttachments[0].filename) &&
+        newAttachments[0].bytes.subarray(0, 4).toString("ascii") === "%PDF",
+      "New invoice and reminder emails must attach invoice PDFs (new invoice attachment missing or invalid)."
+    );
+    await closeEmailDialog();
+
+    await openInvoiceEmail("email-open", "new_invoice");
+    await emailPage.selectOption("#emailPurpose", "payment_reminder");
+    await emailPage.waitForFunction(
+      () =>
+        document.getElementById("emailPurpose")?.value === "payment_reminder" &&
+        document.getElementById("emailAttachmentRow")?.hidden === false
+    );
+    const reminderReview = await emailPage.evaluate(() => ({
+      body: document.getElementById("emailBody")?.value || "",
+      subject: document.getElementById("emailSubject")?.value || "",
+    }));
+    assert(/reminder/i.test(reminderReview.subject), `Reminder subject must identify its context, got ${reminderReview.subject}.`);
+    assert(
+      reminderReview.body.includes("$850.00") &&
+        reminderReview.body.includes("Jan 15, 2099") &&
+        reminderReview.body.includes("Pay by ACH using account ending 1234."),
+      `Reminder body must include balance, due date, and payment instructions, got ${reminderReview.body}.`
+    );
+    await emailPage.click("#emailSend");
+    await waitForGmailCount(2);
+    await waitForEmailAuditCount(2);
+    const reminderMime = decodeBase64Url(gmailRequests[1]?.payload?.raw).toString("utf8");
+    const reminderAttachments = pdfAttachmentsFromMime(reminderMime);
+    assert(
+      reminderAttachments.length === 1 &&
+        reminderAttachments[0].bytes.subarray(0, 4).toString("ascii") === "%PDF",
+      "New invoice and reminder emails must attach invoice PDFs (reminder attachment missing or invalid)."
+    );
+    await closeEmailDialog();
+
+    await openInvoiceEmail("email-partial", "payment_received");
+    const partialReview = await emailPage.evaluate(() => ({
+      purpose: document.getElementById("emailPurpose")?.value,
+      body: document.getElementById("emailBody")?.value || "",
+      attachmentHidden: document.getElementById("emailAttachmentRow")?.hidden,
+    }));
+    assert(partialReview.purpose === "payment_received", `Expected partial payment context, got ${partialReview.purpose}.`);
+    assert(
+      partialReview.body.includes("$250.00") && partialReview.body.includes("$650.00"),
+      `Partial payment email must include the received amount and remaining balance, got ${partialReview.body}.`
+    );
+    assert(partialReview.attachmentHidden === true, "Partial payment review must not show an invoice attachment.");
+    await emailPage.click("#emailSend");
+    await waitForGmailCount(3);
+    await waitForEmailAuditCount(3);
+    const partialMime = decodeBase64Url(gmailRequests[2]?.payload?.raw).toString("utf8");
+    const partialMimeBody = textBodyFromMime(partialMime).replace(/\r\n/g, "\n");
+    assert(
+      pdfAttachmentsFromMime(partialMime).length === 0,
+      "Full and partial payment emails must remain text-only (partial payment attached a PDF)."
+    );
+    assert(
+      partialMimeBody.includes("$250.00") &&
+        partialMimeBody.includes("$650.00") &&
+        /Thank you,\s*\nLedger Manager\s*$/.test(partialMimeBody) &&
+        !partialMimeBody.includes("99 Standard Signature Lane"),
+      "Partial payment MIME must preserve the reviewed amount, balance, and simple sign-off."
+    );
+    await closeEmailDialog();
+
+    await openInvoiceEmail("email-paid", "payment_received");
+    const paidReview = await emailPage.evaluate(() => ({
+      body: document.getElementById("emailBody")?.value || "",
+      attachmentHidden: document.getElementById("emailAttachmentRow")?.hidden,
+    }));
+    assert(
+      paidReview.body.includes("$300.00") && /paid in full/i.test(paidReview.body),
+      `Full payment email must include the payment amount and paid-in-full result, got ${paidReview.body}.`
+    );
+    assert(paidReview.attachmentHidden === true, "Full payment review must not show an invoice attachment.");
+    await emailPage.click("#emailSend");
+    await waitForGmailCount(4);
+    await waitForEmailAuditCount(4);
+    const paidMime = decodeBase64Url(gmailRequests[3]?.payload?.raw).toString("utf8");
+    const paidMimeBody = textBodyFromMime(paidMime).replace(/\r\n/g, "\n");
+    assert(
+      pdfAttachmentsFromMime(paidMime).length === 0,
+      "Full and partial payment emails must remain text-only (full payment attached a PDF)."
+    );
+    assert(
+      paidMimeBody.includes("$300.00") &&
+        /paid in full/i.test(paidMimeBody) &&
+        /Thank you,\s*\nLedger Manager\s*$/.test(paidMimeBody) &&
+        !paidMimeBody.includes("99 Standard Signature Lane"),
+      "Full payment MIME must preserve the reviewed amount, paid status, and simple sign-off."
+    );
+    assert((await emailAuditCount()) === 4, "Each confirmed Gmail send must add one local email audit event.");
+    await closeEmailDialog();
+
+    await openInvoiceEmail("email-open", "new_invoice");
+    const requestsBeforeInvalid = gmailRequests.length;
+    await emailPage.evaluate(() => {
+      const recipient = document.getElementById("emailTo");
+      recipient.removeAttribute("readonly");
+      recipient.value = "";
+      recipient.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await emailPage.click("#emailSend");
+    await emailPage.waitForTimeout(100);
+    const missingRecipientMessage = await emailPage.evaluate(
+      () =>
+        `${document.getElementById("emailDialogStatus")?.textContent || ""} ${
+          document.getElementById("toast")?.textContent || ""
+        }`.trim()
+    );
+    assert(
+      gmailRequests.length === requestsBeforeInvalid && /required|missing|valid/i.test(missingRecipientMessage),
+      `Missing tenant email must be blocked before Gmail, got ${missingRecipientMessage}.`
+    );
+    await emailPage.evaluate(() => {
+      const recipient = document.getElementById("emailTo");
+      recipient.value = "not-an-email";
+      recipient.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await emailPage.click("#emailSend");
+    await emailPage.waitForTimeout(100);
+    const invalidRecipientMessage = await emailPage.evaluate(
+      () =>
+        `${document.getElementById("emailDialogStatus")?.textContent || ""} ${
+          document.getElementById("toast")?.textContent || ""
+        }`.trim()
+    );
+    assert(
+      gmailRequests.length === requestsBeforeInvalid && /valid|invalid/i.test(invalidRecipientMessage),
+      `Invalid tenant email must be blocked before Gmail, got ${invalidRecipientMessage}.`
+    );
+    await closeEmailDialog();
+
+    gmailResponse = {
+      status: 500,
+      body: JSON.stringify({ error: { code: 500, message: "Simulated uncertain Gmail failure" } }),
+    };
+    const auditBeforeFailure = await emailAuditCount();
+    await openInvoiceEmail("email-open", "new_invoice");
+    await emailPage.click("#emailSend");
+    await waitForGmailCount(5);
+    await emailPage.waitForFunction(
+      () =>
+        /Delivery could not be confirmed\. Check Gmail Sent before trying again/i.test(
+          document.getElementById("emailDialogStatus")?.textContent || ""
+        )
+    );
+    const failureStatus = await emailPage.locator("#emailDialogStatus").textContent();
+    const uncertainSendState = await emailPage.evaluate(() => ({
+      disabled: document.getElementById("emailSend")?.disabled,
+      label: document.getElementById("emailSend")?.textContent?.trim(),
+    }));
+    assert(
+      /Delivery could not be confirmed\. Check Gmail Sent before trying again/i.test(failureStatus || ""),
+      `Uncertain Gmail failures must tell the operator to check before retrying, got ${failureStatus}.`
+    );
+    assert(
+      uncertainSendState.disabled === true && uncertainSendState.label === "Check Sent",
+      `Uncertain delivery must block an immediate retry, got ${JSON.stringify(uncertainSendState)}.`
+    );
+    assert(
+      (await emailAuditCount()) === auditBeforeFailure,
+      "Failed Gmail sends must not add an email audit event."
+    );
+    assert(gmailRequests.length === 5, "A failed Gmail send must not retry automatically.");
+    await closeEmailDialog();
+
+    const cancelPage = await emailContext.newPage();
+    const cancelPageErrors = [];
+    cancelPage.on("pageerror", (error) => cancelPageErrors.push(error?.stack || error?.message || String(error)));
+    await cancelPage.goto(`${baseUrl.replace(/\/$/, "")}/#settings`, { waitUntil: "networkidle" });
+    await cancelPage.evaluate(() => {
+      window.__rentLedgerEmailMock.mode = "cancel";
+    });
+    const requestsBeforeCancel = gmailRequests.length;
+    const auditsBeforeCancel = await emailAuditCount(cancelPage);
+    await cancelPage.click("#connectEmail");
+    await cancelPage.waitForFunction(
+      () => /cancel|failed|needed|connect/i.test(document.getElementById("emailStatus")?.textContent || "")
+    );
+    assert(gmailRequests.length === requestsBeforeCancel, "Cancelled Google authorization must not call Gmail.");
+    assert(
+      (await emailAuditCount(cancelPage)) === auditsBeforeCancel,
+      "Cancelled Google authorization must not record an email audit event."
+    );
+    assert(cancelPageErrors.length === 0, `Email OAuth cancellation page errors: ${cancelPageErrors.join(" | ")}.`);
+    await cancelPage.close();
+
+    await emailPage.evaluate(() => {
+      delete window.__RENT_LEDGER_ENABLE_TEST_HOOKS__;
+      delete window.__RENT_LEDGER_EMAIL_TEST_ORIGIN__;
+    });
+    const requestsBeforeOriginGate = gmailRequests.length;
+    await openInvoiceEmail("email-open", "new_invoice");
+    const originGateState = await emailPage.evaluate(() => ({
+      sendDisabled: document.getElementById("emailSend")?.disabled,
+      status: document.getElementById("emailDialogStatus")?.textContent || "",
+    }));
+    assert(
+      originGateState.sendDisabled === true &&
+        originGateState.status.includes("Direct send is available only at https://rent-ledger-app.pages.dev"),
+      `Direct Gmail sending must fail closed away from production without the local test hook, got ${JSON.stringify(
+        originGateState
+      )}.`
+    );
+    assert(gmailRequests.length === requestsBeforeOriginGate, "The production-origin gate must block Gmail requests.");
+    await closeEmailDialog();
+
+    assert(emailPageErrors.length === 0, `Email smoke page errors: ${emailPageErrors.join(" | ")}.`);
+  } finally {
+    await emailContext.close();
+  }
 }
 
 async function runWorkflowDraftRoutingSmokeTests() {
@@ -357,6 +1034,7 @@ async function runWorkflowDraftRoutingSmokeTests() {
 }
 
 try {
+  await runEmailSmokeTests();
   await runWorkflowDraftRoutingSmokeTests();
   const page = await context.newPage();
   const pageErrors = [];
@@ -2019,8 +2697,8 @@ try {
       },
     };
   });
-  await page.locator("details.advanced-settings").evaluate((details) => {
-    details.open = true;
+  await page.locator("#googleClientId").evaluate((input) => {
+    input.closest("details").open = true;
   });
   await page.fill("#googleClientId", testClientId);
   await page.check("#driveAutoSync");

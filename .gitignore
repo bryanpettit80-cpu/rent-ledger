@@ -16,3 +16,9 @@ exports/
 output/
 tmp/
 .codex-remote-attachments/
+
+# Generated static hosting artifact
+_site/
+
+# Local test dependencies
+node_modules/
