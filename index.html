@@ -8,10 +8,10 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Rent Ledger</title>
-    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v40" />
+    <link rel="manifest" href="manifest.webmanifest?v=rent-ledger-v41" />
     <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=rent-ledger-v40" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v41" />
   </head>
   <body>
     <div id="app" class="app">
@@ -23,11 +23,11 @@
           <div class="splash-meta" aria-label="Build details">
             <div>
               <span>Version</span>
-              <strong id="splashVersion">rent-ledger-v40</strong>
+              <strong id="splashVersion">rent-ledger-v41</strong>
             </div>
             <div>
               <span>Commit date</span>
-              <strong id="splashCommitDate">July 19, 2026</strong>
+              <strong id="splashCommitDate">July 30, 2026</strong>
             </div>
           </div>
           <button class="primary-button" id="enterApp" type="button">Open dashboard</button>
@@ -598,6 +598,29 @@
                   <strong id="metricPaid">0</strong>
                 </div>
               </div>
+              <div class="backup-tools file-backup-tools" aria-labelledby="fileBackupHeading">
+                <div>
+                  <p class="eyebrow">Offline safety</p>
+                  <h2 id="fileBackupHeading">JSON Backup</h2>
+                  <p class="backup-copy">
+                    Export a complete backup before moving this ledger to another website or replacing browser data.
+                  </p>
+                </div>
+                <div class="backup-status">
+                  <span id="backupCount">0 local backups</span>
+                  <strong id="backupLatest">No backup yet</strong>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="exportBackupSettings" type="button">Export JSON</button>
+                  <button class="secondary-button" id="importBackupButton" type="button">Import JSON</button>
+                  <input id="importBackup" type="file" accept=".json,application/json" hidden />
+                  <button class="secondary-button" id="restoreLatestBackup" type="button">Restore latest local backup</button>
+                </div>
+                <p class="field-help">
+                  Import replaces this browser's data only after confirmation. Keep the exported file until the new
+                  production origin has been independently verified.
+                </p>
+              </div>
               <div class="backup-tools drive-tools">
                 <div>
                   <p class="eyebrow">Cloud backup</p>
@@ -638,6 +661,45 @@
                   </label>
                 </details>
               </div>
+              <div class="backup-tools email-tools" aria-labelledby="googleEmailHeading">
+                <div>
+                  <p class="eyebrow">Email delivery</p>
+                  <h2 id="googleEmailHeading">Google Email</h2>
+                  <p class="backup-copy">
+                    Review and send invoice messages through Gmail. Email authorization is separate from Drive.
+                  </p>
+                </div>
+                <div class="backup-status">
+                  <span>Connection</span>
+                  <strong id="emailStatus" aria-live="polite">Not connected</strong>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="connectEmail" type="button">Connect Google Email</button>
+                </div>
+                <p class="field-help">
+                  Rent Ledger requests permission to send only after you connect. It cannot read your inbox.
+                </p>
+                <details class="advanced-settings">
+                  <summary>Advanced email setup</summary>
+                  <label>
+                    Google OAuth client ID
+                    <input
+                      id="emailGoogleClientId"
+                      type="text"
+                      autocomplete="off"
+                      placeholder="1234567890-abc.apps.googleusercontent.com"
+                      aria-describedby="emailClientIdHelp"
+                    />
+                  </label>
+                  <p class="field-help" id="emailClientIdHelp">
+                    Use a Web application client authorized only for the dedicated production origin. Do not paste a
+                    client secret.
+                  </p>
+                </details>
+                <p class="field-help">
+                  See the <a href="privacy.html">Rent Ledger privacy notice</a> for local storage and Google data use.
+                </p>
+              </div>
               <div class="backup-tools report-tools">
                 <div>
                   <p class="eyebrow">Exports</p>
@@ -673,7 +735,74 @@
         </section>
       </main>
 
+      <footer class="site-footer" aria-label="Application policies">
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+      </footer>
+
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="modal-backdrop" id="emailDialog" hidden>
+        <section
+          class="modal-panel email-modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="emailDialogTitle"
+          aria-describedby="emailDialogCopy"
+        >
+          <div>
+            <p class="eyebrow">Email delivery</p>
+            <h2 id="emailDialogTitle">Review email</h2>
+            <p class="panel-copy" id="emailDialogCopy">
+              Confirm the recipient and wording before sending through your connected Google account.
+            </p>
+          </div>
+          <div class="email-review-form">
+            <label>
+              Email context
+              <select id="emailPurpose">
+                <option value="new_invoice">New invoice</option>
+                <option value="payment_received">Payment received</option>
+                <option value="payment_reminder">Payment reminder</option>
+              </select>
+            </label>
+            <div class="email-identity-grid">
+              <label>
+                From address
+                <input id="emailFrom" type="email" autocomplete="off" readonly />
+              </label>
+              <label>
+                Connected Google account
+                <input id="emailAccount" type="email" autocomplete="off" readonly />
+              </label>
+            </div>
+            <label>
+              To
+              <input id="emailTo" type="email" autocomplete="off" readonly />
+            </label>
+            <label>
+              Subject
+              <input id="emailSubject" type="text" autocomplete="off" maxlength="180" />
+            </label>
+            <label>
+              Message
+              <textarea id="emailBody" rows="12"></textarea>
+            </label>
+            <div class="email-attachment-row" id="emailAttachmentRow" hidden>
+              <span>Attachment</span>
+              <strong id="emailAttachmentName">Invoice PDF</strong>
+            </div>
+            <p class="email-dialog-status" id="emailDialogStatus" role="status" aria-live="polite"></p>
+          </div>
+          <div class="button-row email-dialog-actions">
+            <button class="secondary-button" id="emailCopy" type="button">Copy</button>
+            <button class="secondary-button" id="emailCancel" type="button">Cancel</button>
+            <button class="primary-button" id="emailSend" type="button">Send</button>
+          </div>
+          <p class="field-help">
+            Rent Ledger sends the message shown above and does not add your standard Gmail signature.
+          </p>
+        </section>
+      </div>
       <div class="modal-backdrop" id="paymentDialog" hidden>
         <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="paymentDialogHeading">
           <div>
@@ -697,6 +826,6 @@
       </div>
     </div>
 
-    <script src="app.js?v=rent-ledger-v40" defer></script>
+    <script src="app.js?v=rent-ledger-v41" defer></script>
   </body>
 </html>

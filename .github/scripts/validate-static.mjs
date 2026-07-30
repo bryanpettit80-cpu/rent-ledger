@@ -3,15 +3,20 @@ import { readFileSync } from "node:fs";
 const files = {
   app: readFileSync("app.js", "utf8"),
   html: readFileSync("index.html", "utf8"),
+  privacy: readFileSync("privacy.html", "utf8"),
+  terms: readFileSync("terms.html", "utf8"),
+  headers: readFileSync("_headers", "utf8"),
   serviceWorker: readFileSync("sw.js", "utf8"),
   readme: readFileSync("README.md", "utf8"),
   deployment: readFileSync("DEPLOYMENT.md", "utf8"),
   mobileLauncher: readFileSync("Start-Rent-Ledger-Mobile.ps1", "utf8"),
   bumpVersion: readFileSync(".github/scripts/bump-version.mjs", "utf8"),
+  prepareStaticSite: readFileSync(".github/scripts/prepare-static-site.mjs", "utf8"),
   smokeTest: readFileSync(".github/scripts/smoke-test.mjs", "utf8"),
 };
 
 const failures = [];
+const appLines = new Set(files.app.split(/\r?\n/).map((line) => line.trim()));
 
 function assert(condition, message) {
   if (!condition) failures.push(message);
@@ -47,6 +52,8 @@ const appCommitDate = appCommitDateMatch?.[1] || "";
 const versionedFiles = {
   "app.js": files.app,
   "index.html": files.html,
+  "privacy.html": files.privacy,
+  "terms.html": files.terms,
   "sw.js": files.serviceWorker,
 };
 
@@ -64,11 +71,15 @@ assert(
 assert(files.html.includes(`app.js?v=${appVersion}`), "index.html script URL must use APP_VERSION.");
 assert(files.html.includes(`styles.css?v=${appVersion}`), "index.html stylesheet URL must use APP_VERSION.");
 assert(files.html.includes(`manifest.webmanifest?v=${appVersion}`), "index.html manifest URL must use APP_VERSION.");
+assert(files.privacy.includes(`styles.css?v=${appVersion}`), "privacy.html stylesheet URL must use APP_VERSION.");
+assert(files.terms.includes(`styles.css?v=${appVersion}`), "terms.html stylesheet URL must use APP_VERSION.");
 
 assert(files.serviceWorker.includes(`const CACHE_NAME = "${appVersion}"`), "sw.js CACHE_NAME must match APP_VERSION.");
 assert(files.serviceWorker.includes(`./app.js?v=${appVersion}`), "sw.js must cache the versioned app.js URL.");
 assert(files.serviceWorker.includes(`./styles.css?v=${appVersion}`), "sw.js must cache the versioned styles.css URL.");
 assert(files.serviceWorker.includes(`./manifest.webmanifest?v=${appVersion}`), "sw.js must cache the versioned manifest URL.");
+assert(files.serviceWorker.includes("./privacy.html"), "sw.js must cache the privacy notice.");
+assert(files.serviceWorker.includes("./terms.html"), "sw.js must cache the terms of use.");
 
 assert(files.html.includes('id="applyRentCharge"'), "Rent workflow must include the Apply charge button.");
 assert(files.html.includes('data-view="invoices"'), "Navigation must include the Invoices page.");
@@ -109,6 +120,55 @@ assert(files.html.includes("Upload to Drive"), "Settings must include Upload to 
 assert(files.html.includes('id="billingHealthList"'), "Overview must include billing health checks.");
 assert(files.html.includes('id="delinquencyList"'), "Overview must include overdue balance follow-up.");
 assert(files.html.includes('id="communicationDraftList"'), "Overview must include communication drafts.");
+for (const id of [
+  "emailDialog",
+  "emailPurpose",
+  "emailFrom",
+  "emailAccount",
+  "emailTo",
+  "emailSubject",
+  "emailBody",
+  "emailAttachmentRow",
+  "emailAttachmentName",
+  "emailDialogStatus",
+  "emailCopy",
+  "emailCancel",
+  "emailSend",
+]) {
+  assert(files.html.includes(`id="${id}"`), `Email review dialog must include #${id}.`);
+}
+for (const id of ["emailGoogleClientId", "connectEmail", "emailStatus"]) {
+  assert(files.html.includes(`id="${id}"`), `Email settings must include #${id}.`);
+}
+for (const id of [
+  "exportBackupSettings",
+  "importBackupButton",
+  "importBackup",
+  "backupCount",
+  "backupLatest",
+  "restoreLatestBackup",
+]) {
+  assert(files.html.includes(`id="${id}"`), `JSON backup controls must include #${id}.`);
+}
+assert(
+  files.html.includes('href="privacy.html"') && files.html.includes('href="terms.html"'),
+  "The application homepage must link its privacy notice and terms."
+);
+assert(
+  files.privacy.includes("Google API Services User Data Policy") &&
+    files.privacy.includes("Limited Use requirements") &&
+    files.privacy.includes('href="terms.html"'),
+  "The privacy notice must include the Google Limited Use disclosure and link the terms."
+);
+assert(files.terms.includes("Rent Ledger Terms of Use"), "The published terms page must identify Rent Ledger.");
+assert(
+  files.headers.includes("style-src 'self' https://accounts.google.com/gsi/style"),
+  "Cloudflare CSP must allow the Google Identity Services stylesheet."
+);
+assert(
+  files.prepareStaticSite.includes('"privacy.html"') && files.prepareStaticSite.includes('"terms.html"'),
+  "Static hosting must publish the privacy notice and terms."
+);
 assert(files.html.includes('id="auditTrailList"'), "Settings must include the local audit trail.");
 assert(files.html.includes('id="exportInvoiceCsv"'), "Settings must include invoice CSV export.");
 assert(files.html.includes('id="lockCurrentCycle"'), "Settings must include current-cycle lock controls.");
@@ -173,7 +233,42 @@ assert(files.app.includes("/^(INV|RNT|UTL|DEP)-\\d{4}-(\\d{2}-)?\\d{4}$/"), "Gen
 assert(files.app.includes("saveDriveSettings(false);"), "Drive actions must save connection fields before running.");
 assert(files.app.includes("function renderOperationsDashboard"), "app.js must render the billing health dashboard.");
 assert(files.app.includes("function getOverdueInvoices"), "app.js must calculate overdue balances.");
-assert(files.app.includes("function copyInvoiceMessage"), "app.js must generate copyable tenant message drafts.");
+assert(files.app.includes("function buildInvoiceEmail"), "app.js must build context-aware invoice emails.");
+assert(files.app.includes("function openEmailDialog"), "app.js must open the invoice email review dialog.");
+assert(files.app.includes("function handleEmailDialogKeydown"), "Email review must contain keyboard focus.");
+assert(files.app.includes("function copyReviewedEmail"), "Email review must retain an explicit copy fallback.");
+assert(files.app.includes("function connectEmail"), "Email settings must support an explicit Gmail connection.");
+assert(files.app.includes("function requestEmailAccess"), "Email sending must request its own Google access token.");
+assert(files.app.includes("function buildGmailRawMessage"), "Email sending must build a standards-safe raw Gmail message.");
+assert(files.app.includes("function emailPurposeForInvoice"), "Invoice email entry points must choose a context-aware purpose.");
+assert(files.app.includes("async function sendInvoiceEmail"), "Email review must send only after an explicit action.");
+assert(
+  files.app.includes('"new_invoice"') &&
+    files.app.includes('"payment_received"') &&
+    files.app.includes('"payment_reminder"'),
+  "Invoice email purposes must include new invoice, payment received, and payment reminder."
+);
+assert(
+  files.app.includes("https://www.googleapis.com/auth/gmail.send") &&
+    files.app.includes("https://www.googleapis.com/auth/userinfo.email"),
+  "Email authorization must request only Gmail send and account-email access."
+);
+assert(
+  !files.app.includes("https://www.googleapis.com/auth/gmail.compose") &&
+    !files.app.includes("https://www.googleapis.com/auth/gmail.modify") &&
+    !files.app.includes("https://www.googleapis.com/auth/gmail.readonly"),
+  "Email authorization must not expand into Gmail compose, modify, or read scopes."
+);
+assert(
+  appLines.has('const EMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";') &&
+    appLines.has('const EMAIL_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";'),
+  "Email delivery must verify the Google account and use Gmail's users.me.messages.send endpoint."
+);
+assert(
+  files.app.includes("__RENT_LEDGER_EMAIL_TEST_ORIGIN__") &&
+    appLines.has('const EMAIL_PRODUCTION_ORIGIN = "https://rent-ledger-app.pages.dev";'),
+  "Gmail sending must be production-origin gated with an explicit smoke-test hook."
+);
 assert(files.app.includes("function exportInvoiceCsv"), "app.js must include invoice CSV export.");
 assert(files.app.includes("function exportTenantStatementCsv"), "app.js must include tenant balance CSV export.");
 assert(files.app.includes("function recordAuditEvent"), "app.js must record a local audit trail.");
@@ -191,7 +286,12 @@ assert(
   files.app.includes("confirmLockedInvoiceChange(invoice, `create this ${invoiceTypeLabel(invoice.invoiceType).toLowerCase()} invoice`)"),
   "Generated current-cycle invoices must require locked-period confirmation before they are saved."
 );
-assert(files.app.includes("data-copy-invoice-message"), "Saved invoice rows must expose message draft actions.");
+assert(
+  files.app.includes("data-email-invoice") && files.app.includes("data-email-purpose"),
+  "Invoice rows must expose context-aware Email actions."
+);
+assert(!files.app.includes("data-copy-invoice-message"), "Legacy invoice Message clipboard actions must be removed.");
+assert(!files.app.includes("function invoiceMailtoHref"), "Invoice email actions must not fall back to mailto delivery.");
 assert(files.app.includes("closedPeriods: normalizeClosedPeriods"), "State normalization must retain closed periods.");
 assert(files.app.includes("auditEvents: normalizeAuditEvents"), "State normalization must retain audit events.");
 assert(files.serviceWorker.includes("async function networkFirst"), "sw.js should keep network-first HTML/CSS/JS handling.");
@@ -389,6 +489,20 @@ assert(
   paymentSource.indexOf("confirmLockedInvoiceChange") < paymentSource.indexOf("invoice.payments ="),
   "Payment recording must refresh and confirm canonical locks immediately before mutation."
 );
+const buildEmailSource = extractFunction(files.app, "buildInvoiceEmail");
+assert(
+  buildEmailSource.includes("new_invoice") &&
+    buildEmailSource.includes("payment_received") &&
+    buildEmailSource.includes("payment_reminder") &&
+    buildEmailSource.includes("Thank you,"),
+  "Context-aware email bodies must cover all purposes and use the simple Rent Ledger sign-off."
+);
+const sendEmailSource = extractFunction(files.app, "sendInvoiceEmail");
+assert(
+  sendEmailSource.includes("persistEmailAudit") &&
+    sendEmailSource.indexOf("persistEmailAudit") > sendEmailSource.indexOf("fetch("),
+  "Email audit activity must be recorded only after the Gmail send request."
+);
 const invoiceHistoryClickSource = extractFunction(files.app, "handleInvoiceHistoryClick");
 assert(
   invoiceHistoryClickSource.indexOf("window.confirm(deleteMessage)") <
@@ -432,7 +546,9 @@ assert(
   "Mobile launcher must support public-root preparation for validation."
 );
 assert(
-  files.mobileLauncher.includes('"index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js"') &&
+  files.mobileLauncher.includes(
+    '"index.html", "privacy.html", "terms.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js"'
+  ) &&
     files.mobileLauncher.includes('$RuntimeDirectories = @("assets")'),
   "Mobile launcher must copy only runtime app files into the public serving directory."
 );
@@ -451,18 +567,16 @@ assert(
   "README must disclose the fail-closed Web Locks limitation for the plain HTTP mobile launcher."
 );
 assert(
-  files.deployment.includes("Upload to Drive") &&
-    files.deployment.includes("stop entering or editing data on the old origin") &&
-    files.deployment.includes("both the old origin and the new dedicated origin") &&
-    files.deployment.includes("same OAuth client ID") &&
-    files.deployment.includes("Download from Drive") &&
-    files.deployment.includes("tenants, saved invoices, balances, closed periods, and period locks") &&
-    files.deployment.includes("remove the old origin from Authorized JavaScript origins on every Web application OAuth client") &&
-    files.deployment.includes("previously used or prefilled client") &&
-    files.deployment.includes("old origin is no longer listed") &&
-    files.deployment.includes("only if it is still intentionally trusted") &&
-    files.deployment.includes("before resuming work"),
-  "Deployment guide must document the complete Drive migration, including retirement of the old OAuth origin."
+  files.deployment.includes("Export JSON") &&
+    files.deployment.includes("Confirm the downloaded `.json` file exists") &&
+    files.deployment.includes("Stop entering or editing data at the old origin") &&
+    files.deployment.includes("Import JSON") &&
+    files.deployment.includes("landlord settings, tenants, saved invoices, balances, payments, closed periods") &&
+    files.deployment.includes("remove the old origin from") &&
+    files.deployment.includes("Authorized JavaScript origins") &&
+    files.deployment.includes("email OAuth client must never contain") &&
+    files.deployment.includes("Preserve its old browser site data and the exported JSON as recovery"),
+  "Deployment guide must document a verified offline JSON migration and safe old-origin retirement."
 );
 assert(files.readme.includes("Create all rent invoices"), "README must document the rent batch flow.");
 assert(files.readme.includes("Create all utilities"), "README must document the utility batch flow.");
@@ -521,6 +635,42 @@ assert(
 assert(
   files.smokeTest.includes("Invoice artifact fingerprint should change when PDF source data changes"),
   "Smoke test must cover invoice artifact source fingerprints."
+);
+assert(
+  files.smokeTest.includes("New invoice and reminder emails must attach invoice PDFs"),
+  "Smoke test must cover Gmail MIME attachments for new invoices and reminders."
+);
+assert(
+  files.smokeTest.includes("Full and partial payment emails must remain text-only"),
+  "Smoke test must cover text-only full and partial payment emails."
+);
+assert(
+  files.smokeTest.includes("Successful Gmail sends must add exactly one email audit event"),
+  "Smoke test must cover confirmed-send audit behavior and duplicate-send suppression."
+);
+assert(
+  files.smokeTest.includes("Failed Gmail sends must not add an email audit event"),
+  "Smoke test must cover fail-safe Gmail error and audit behavior."
+);
+assert(
+  files.smokeTest.includes("Invoice email bodies must use only the simple Rent Ledger sign-off"),
+  "Smoke test must prove that invoice email bodies omit the operator's standard signature."
+);
+assert(
+  files.smokeTest.includes("Email review must trap keyboard focus"),
+  "Smoke test must cover keyboard focus containment in the email review."
+);
+assert(
+  files.smokeTest.includes("Legacy paid invoices without payment details must not invent a payment email"),
+  "Smoke test must cover legacy paid invoices that lack payment records."
+);
+assert(
+  files.smokeTest.includes("Uncertain delivery must block an immediate retry"),
+  "Smoke test must prevent an immediate retry after uncertain Gmail delivery."
+);
+assert(
+  files.smokeTest.includes("Direct Gmail sending must fail closed away from production"),
+  "Smoke test must exercise the direct-send production-origin gate."
 );
 
 if (failures.length) {

@@ -40,12 +40,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Prepare static site
-        run: |
-          mkdir _site
-          cp index.html styles.css app.js manifest.webmanifest sw.js _site/
-          cp -R assets _site/assets
-          touch _site/.nojekyll
+        run: node .github/scripts/prepare-static-site.mjs
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
