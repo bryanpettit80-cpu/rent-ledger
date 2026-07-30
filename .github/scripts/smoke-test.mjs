@@ -461,7 +461,11 @@ async function runEmailSmokeTests() {
       userinfoRequests.some((request) => request.authorization === "Bearer email-test-access-token"),
       "Email connection must verify the authenticated Google account with its in-memory token."
     );
-    assert(authState.settings.includes(emailClientId), "Email connection must save the edited Gmail OAuth client ID.");
+    const savedEmailSettings = JSON.parse(authState.settings);
+    assert(
+      savedEmailSettings.emailGoogleClientId === emailClientId,
+      "Email connection must save the edited Gmail OAuth client ID."
+    );
     assert(
       !authState.storageDump.includes("email-test-access-token"),
       "Email OAuth access tokens must remain in memory and never enter browser storage."

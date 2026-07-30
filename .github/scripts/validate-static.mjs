@@ -16,6 +16,7 @@ const files = {
 };
 
 const failures = [];
+const appLines = new Set(files.app.split(/\r?\n/).map((line) => line.trim()));
 
 function assert(condition, message) {
   if (!condition) failures.push(message);
@@ -259,13 +260,13 @@ assert(
   "Email authorization must not expand into Gmail compose, modify, or read scopes."
 );
 assert(
-  files.app.includes("https://gmail.googleapis.com/gmail/v1/users/me/messages/send") &&
-    files.app.includes("https://www.googleapis.com/oauth2/v3/userinfo"),
+  appLines.has('const EMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";') &&
+    appLines.has('const EMAIL_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";'),
   "Email delivery must verify the Google account and use Gmail's users.me.messages.send endpoint."
 );
 assert(
   files.app.includes("__RENT_LEDGER_EMAIL_TEST_ORIGIN__") &&
-    files.app.includes("https://rent-ledger-app.pages.dev"),
+    appLines.has('const EMAIL_PRODUCTION_ORIGIN = "https://rent-ledger-app.pages.dev";'),
   "Gmail sending must be production-origin gated with an explicit smoke-test hook."
 );
 assert(files.app.includes("function exportInvoiceCsv"), "app.js must include invoice CSV export.");
