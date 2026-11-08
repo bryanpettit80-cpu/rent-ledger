@@ -7,7 +7,7 @@ const requestedDate = readDateArg() || new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 }).format(new Date());
 
-const files = ["app.js", "index.html", "sw.js"];
+const files = ["app.js", "index.html", "privacy.html", "terms.html", "sw.js"];
 const app = readFileSync("app.js", "utf8");
 const currentVersion = app.match(/const APP_VERSION = "(rent-ledger-v\d+)"/)?.[1];
 

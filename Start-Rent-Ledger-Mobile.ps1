@@ -9,7 +9,7 @@ $StateDir = Join-Path $env:LOCALAPPDATA "RentLedger"
 $StatePath = Join-Path $StateDir "server.json"
 $PublishRoot = Join-Path $StateDir "mobile-public"
 $FirewallRuleName = "Rent Ledger Mobile 4173-4199"
-$RuntimeFiles = @("index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js")
+$RuntimeFiles = @("index.html", "privacy.html", "terms.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js")
 $RuntimeDirectories = @("assets")
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 

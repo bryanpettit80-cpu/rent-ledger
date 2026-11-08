@@ -17,8 +17,9 @@ Rent Ledger is a local-first invoice app for landlords who need to create rent i
 - Prints invoices to paper or PDF through the browser.
 - Generates invoice PDFs and saves them to Google Drive when Drive is connected.
 - Records full and partial invoice payments from the saved-invoice lists without adding payment fields to the invoice editor.
-- Creates copyable tenant message drafts for open balances.
+- Reviews and sends context-aware invoice, payment-received, and payment-reminder emails through Gmail.
 - Saves invoice history in the current browser.
+- Exports and imports complete JSON backups for offline recovery and origin migration.
 - Keeps a Local Audit Trail of local saves, payments, imports, Drive writes, and period locks.
 - Exports invoice, tenant balance, and audit CSV reports.
 - Locks reviewed billing periods so invoice changes require confirmation.
@@ -142,8 +143,9 @@ The Overview screen includes an operations section for day-to-day review:
 
 - Billing Health checks active tenants, missing emails, zero rent amounts, utility allocation setup, duplicate tenant/type/period invoices or repeated one-time deposits, paid invoices with remaining balances, overdue open balances, and whether reviewed periods are locked.
 - Next actions routes directly to Rent, Utilities, Security Deposits, Invoices, or the current-cycle lock action.
-- Open Balances lists overdue invoices with quick access to open the invoice, copy a tenant message, or record payment.
-- Communication drafts generate local message text for open invoices. The app prepares the draft, but it does not send email.
+- Open Balances lists overdue invoices with quick access to open the invoice, review a payment reminder, or record payment.
+- Context-aware email review supports a new invoice, a full or partial payment receipt, and a payment reminder. Every send
+  requires an explicit review and **Send** action; **Copy** remains available as a fallback.
 
 ## Closed Periods
 
@@ -283,26 +285,58 @@ Important:
 - Browser storage is not a permanent accounting archive.
 - Clearing browser data can remove saved tenants and invoices.
 - Google Drive sync is unavailable until a valid OAuth client ID is configured and Drive is connected.
+- Use **Settings > JSON Backup** for a verified offline copy before replacing data or moving to another origin.
+
+## Google Email Sending
+
+Google Email is optional and available only from the dedicated production HTTPS origin. It uses a separate Google OAuth
+Web client from Drive so email permission is not granted to the old shared GitHub Pages origin or to Cloudflare preview
+deployments.
+
+In `Settings`:
+
+1. Open **Google Email > Advanced email setup** and paste the Web application OAuth client ID authorized for the exact
+   production origin.
+2. Select **Connect Google Email** and choose the Gmail account that should send invoice mail.
+3. Confirm the saved landlord email is that Gmail address or an address already verified in Gmail as a
+   **Send mail as** alias.
+4. Open an invoice email action, choose the context, and review the sender, recipient, subject, body, and attachment.
+5. Select **Send** only after the message is correct, or **Copy** to use the text elsewhere.
+
+The three contexts are:
+
+- **New invoice**: invoice number/type/period, amount, due date, and payment instructions, with the current invoice PDF.
+- **Payment received**: the latest full or partial payment amount/date and any remaining balance, without a PDF.
+- **Payment reminder**: current balance, due or overdue wording, and payment instructions, with the current invoice PDF.
+
+Rent Ledger supplies the complete plain-text body and does not add the normal Gmail signature. The app requests only
+permission to send and identify the connected account; it cannot read the inbox or create Gmail aliases. Access tokens
+remain in page memory and are not included in local state, Drive sync, or backups. A local audit event is written only
+after Gmail confirms success.
 
 ## Data And Privacy
 
-This app is local-first. Tenant and invoice data stays in the browser unless you connect Google Drive sync or print/save invoice PDFs.
+This app is local-first. Tenant and invoice data stays in the browser unless you connect Google Drive, send an email
+through Gmail, or print/save/export data.
 
 The operations dashboard, closed periods, CSV exports, and local audit trail also run in the browser and stay in the same local state file.
 
-The current static version does not include:
+The current static architecture does not include:
 
 - User accounts
 - Cloud database sync
-- Email sending
+- Backend or SMTP credentials
+- Bulk or scheduled email
 - Online payment collection
 - Multi-user access control
 
-A production synced version should add authentication, a database, encrypted transport, access controls, and a retention/backup policy.
+The complete personal-use disclosure, Google data use, retention, and deletion controls are in
+[`privacy.html`](privacy.html). Use is also subject to [`terms.html`](terms.html).
 
 ## Deployment
 
-The app is deployed with GitHub Pages.
+The production target is a dedicated Cloudflare Pages HTTPS origin. GitHub Pages remains available during the
+state-migration window.
 
 More deployment notes are in:
 
@@ -318,10 +352,14 @@ styles.css
 app.js
 manifest.webmanifest
 sw.js
+privacy.html
+terms.html
+_headers
 assets/
 ```
 
-No build step is required for the current app.
+No build step is required to run the app. Hosting uses
+`.github/scripts/prepare-static-site.mjs` to stage only the approved runtime files in `_site/`.
 
 ## Release Checklist
 
@@ -388,6 +426,7 @@ With Google Drive sync, connect Drive on the second device and use `Download fro
 
 ## Development Notes
 
-The app is dependency-free and currently does not require Node, npm, or a build tool.
+The app is dependency-free and does not require Node, npm, or a build tool at runtime. Node is used by repository
+validation and the static-hosting staging script.
 
 For local testing, serve the folder over HTTP instead of opening `index.html` directly. The included launch scripts do this automatically.

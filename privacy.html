@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#20332f" />
+    <title>Privacy Notice | Rent Ledger</title>
+    <link rel="icon" href="assets/rent-ledger-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=rent-ledger-v41" />
+  </head>
+  <body>
+    <header class="topbar privacy-topbar">
+      <a class="brand" href="./" aria-label="Return to Rent Ledger">
+        <img src="assets/rent-ledger-icon.svg" alt="" class="brand-mark" />
+        <span>
+          <strong>Rent Ledger</strong>
+          <small>Privacy notice</small>
+        </span>
+      </a>
+      <a class="secondary-button privacy-return" href="./">Return to app</a>
+    </header>
+
+    <main class="main privacy-main">
+      <article class="panel privacy-panel">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">Personal-use application</p>
+            <h1>Rent Ledger Privacy Notice</h1>
+            <p class="panel-copy">Effective July 30, 2026</p>
+          </div>
+        </header>
+
+        <div class="privacy-content">
+          <p>
+            Rent Ledger is a personal rent-administration tool operated by the person who deployed this copy. It is a
+            static browser app, not a public account service. The app has no developer-operated backend, advertising,
+            analytics, or tracking.
+          </p>
+
+          <section>
+            <h2>Data kept in this browser</h2>
+            <p>
+              The app stores landlord settings, tenant contact and rental details, invoices, charges, payments, closed
+              periods, audit events, and backup history in this browser's local storage. It also creates invoice PDFs,
+              CSV reports, and JSON backups in the browser when requested.
+            </p>
+            <p>
+              Browser data remains until it is deleted in the app or the browser's site data is cleared. Anyone who can
+              use this browser profile or run code on the same website origin may be able to access that local data.
+            </p>
+          </section>
+
+          <section>
+            <h2>Optional Google Drive use</h2>
+            <p>
+              If the operator connects Google Drive, Rent Ledger requests the limited
+              <code>drive.file</code> permission. The app can upload and download its state file and invoice PDFs in a
+              visible <code>Rent Ledger</code> folder. Google retains those files under the connected account's
+              settings and policies.
+            </p>
+          </section>
+
+          <section>
+            <h2>Optional Google Email use</h2>
+            <p>
+              If the operator connects Google Email, Rent Ledger requests permission to identify the connected Google
+              account and send email through Gmail. It does not request permission to read the inbox, contacts, or
+              existing messages.
+            </p>
+            <p>
+              After the operator reviews and presses <strong>Send</strong>, the app sends the displayed sender,
+              recipient, subject, and message body to the Gmail API. New-invoice and payment-reminder messages also
+              include the invoice PDF shown in the review dialog. Payment-received messages are text only. Rent Ledger
+              supplies the complete message body and does not add the operator's normal Gmail signature.
+            </p>
+            <p>
+              After Gmail confirms a send, the local audit trail records the email context, invoice number, sender,
+              recipient, Gmail message identifier, and time. It does not store the Google access token or a copy of the
+              message body in that audit event. Sent messages remain subject to the connected Google account's
+              retention and deletion controls.
+            </p>
+          </section>
+
+          <section>
+            <h2>Tokens and sharing</h2>
+            <p>
+              Google access tokens are short-lived and kept only in page memory. They are not written to local storage,
+              Drive state, backups, or the repository. Data is shared with Google only when the operator connects a
+              Google feature or sends, uploads, or downloads through it.
+            </p>
+            <p>
+              Rent Ledger's use and transfer to any other app of information received from Google APIs will adhere to
+              the
+              <a href="https://developers.google.com/terms/api-services-user-data-policy"
+                >Google API Services User Data Policy</a
+              >, including the Limited Use requirements.
+            </p>
+          </section>
+
+          <section>
+            <h2>Your controls</h2>
+            <ul>
+              <li>Delete or correct tenants, invoices, and payments in Rent Ledger.</li>
+              <li>Export or import a complete JSON backup from Settings.</li>
+              <li>Delete Rent Ledger files from Google Drive and sent messages from Gmail.</li>
+              <li>Revoke Rent Ledger access from the connected Google Account's security settings.</li>
+              <li>Clear this origin's browser site data to remove its local records, backups, settings, and audit trail.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Terms</h2>
+            <p>Use of this deployment is also subject to the <a href="terms.html">Rent Ledger Terms of Use</a>.</p>
+          </section>
+
+          <section>
+            <h2>Questions</h2>
+            <p>
+              For privacy questions about a particular deployment, contact the Rent Ledger owner who operates that
+              deployment or use the contact shown on its Google OAuth consent screen.
+            </p>
+          </section>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

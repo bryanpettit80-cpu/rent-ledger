@@ -1046,6 +1046,18 @@ button:focus-visible {
   padding-top: 20px;
 }
 
+.email-tools,
+.report-tools,
+.lock-tools {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.email-tools a {
+  color: var(--brand-2);
+  font-weight: 800;
+}
+
 .backup-copy {
   margin: 8px 0 0;
   color: var(--muted);
@@ -1070,6 +1082,20 @@ button:focus-visible {
 
 .backup-status strong {
   font-size: 0.95rem;
+}
+
+.site-footer {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 18px 28px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.site-footer a {
+  color: inherit;
 }
 
 .advanced-settings {
@@ -1144,6 +1170,128 @@ button:focus-visible {
   box-shadow: 0 22px 72px rgba(24, 37, 34, 0.24);
 }
 
+.email-modal-panel {
+  width: min(100%, 720px);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+}
+
+.email-review-form {
+  display: grid;
+  gap: 14px;
+}
+
+.email-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.email-review-form input[readonly] {
+  color: var(--muted);
+  background: var(--surface-muted);
+}
+
+.email-review-form textarea {
+  min-height: 220px;
+  line-height: 1.5;
+}
+
+.email-attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--surface-muted);
+}
+
+.email-attachment-row span,
+.email-dialog-status {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.email-attachment-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.email-dialog-status {
+  min-height: 1.2em;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.email-dialog-status.is-error {
+  color: var(--danger);
+  font-weight: 800;
+}
+
+.email-dialog-status.is-success {
+  color: var(--ok);
+  font-weight: 800;
+}
+
+.email-dialog-actions {
+  justify-content: flex-end;
+}
+
+.privacy-topbar {
+  grid-template-columns: 1fr auto;
+}
+
+.privacy-return {
+  justify-self: end;
+}
+
+.privacy-main {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.privacy-panel {
+  overflow: visible;
+}
+
+.privacy-content {
+  display: grid;
+  gap: 24px;
+  padding: 4px 22px 28px;
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.privacy-content section {
+  display: grid;
+  gap: 8px;
+}
+
+.privacy-content h2 {
+  font-size: 1.05rem;
+}
+
+.privacy-content p,
+.privacy-content ul {
+  margin: 0;
+}
+
+.privacy-content ul {
+  padding-left: 22px;
+}
+
+.privacy-content code {
+  border-radius: 4px;
+  padding: 2px 5px;
+  color: var(--brand);
+  background: var(--surface-muted);
+  font-size: 0.9em;
+}
+
 .partial-payment-fields {
   display: grid;
   gap: 12px;
@@ -1172,8 +1320,22 @@ button:focus-visible {
       "tabs";
   }
 
+  .privacy-topbar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: none;
+  }
+
+  .privacy-return {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+
   .brand {
     grid-area: brand;
+  }
+
+  .privacy-topbar .brand {
+    grid-area: auto;
   }
 
   .nav-tabs {
@@ -1230,6 +1392,7 @@ button:focus-visible {
   .grid.four,
   .line-item,
   .cycle-row,
+  .email-identity-grid,
   .operations-grid,
   .doc-grid {
     grid-template-columns: 1fr;
@@ -1264,6 +1427,19 @@ button:focus-visible {
 
   .button-row button {
     min-width: 0;
+  }
+
+  .email-modal-panel {
+    max-height: calc(100dvh - 36px);
+    padding: 18px;
+  }
+
+  .email-dialog-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .email-dialog-actions .primary-button {
+    grid-column: 1 / -1;
   }
 
   .invoice-sheet {
